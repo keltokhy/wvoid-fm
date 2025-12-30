@@ -701,7 +701,7 @@ SEGMENT_PROBABILITY = {
     "late_night": 0.7,   # 70% chance - more contemplative, more segments
     "night": 0.5,        # 50% chance
     "evening": 0.4,      # 40% chance
-    "afternoon": 0.3,    # 30% chance - fewer interruptions during peak
+    "afternoon": 0.4,    # 40% chance minimum
     "morning": 0.4,      # 40% chance
     "early_morning": 0.5, # 50% chance
 }
