@@ -128,8 +128,15 @@ TIME_PROFILES = {
         "vibes": ["soul", "funk", "indie", "world", "jazz", "hiphop_chill"],
         "description": "Building momentum. Grooving into the day.",
     },
-    "afternoon": {  # 14:00-17:59
-        "hours": range(14, 18),
+    "early_afternoon": {  # 14:00-14:59 - Talk heavy hour
+        "hours": range(14, 15),
+        "energy_range": (0.4, 0.6),
+        "prefer_warmth": 0.5,
+        "vibes": ["jazz", "soul", "indie", "world", "downtempo"],
+        "description": "The talk hour. More segments, slower pace.",
+    },
+    "afternoon": {  # 15:00-17:59
+        "hours": range(15, 18),
         "energy_range": (0.5, 0.8),
         "prefer_warmth": 0.4,
         "vibes": ["funk", "disco", "hiphop", "indie", "electronic", "world", "rock"],
@@ -655,12 +662,15 @@ def should_play_segment(time_period: str) -> bool:
     if force_segment:
         return True
 
+    # Get spacing for current time period
+    min_tracks, max_tracks = get_segment_spacing()
+
     # Always skip if played too recently
-    if tracks_since_segment < MIN_TRACKS_BETWEEN_SEGMENTS:
+    if tracks_since_segment < min_tracks:
         return False
 
     # Always play if it's been too long
-    if tracks_since_segment >= MAX_TRACKS_WITHOUT_SEGMENT:
+    if tracks_since_segment >= max_tracks:
         return True
 
     # Otherwise, use probability based on time of day
@@ -698,19 +708,30 @@ CHUNK_MAX_DURATION = 180
 # Variable segment frequency by time period
 # Higher = more likely to play segment after each track
 SEGMENT_PROBABILITY = {
-    "late_night": 0.7,   # 70% chance - more contemplative, more segments
-    "night": 0.5,        # 50% chance
-    "evening": 0.4,      # 40% chance
-    "afternoon": 0.4,    # 40% chance minimum
-    "morning": 0.4,      # 40% chance
-    "early_morning": 0.5, # 50% chance
+    "late_night": 0.7,       # 70% chance - more contemplative, more segments
+    "night": 0.5,            # 50% chance
+    "evening": 0.4,          # 40% chance
+    "afternoon": 0.4,        # 40% chance
+    "early_afternoon": 0.8,  # 80% chance - talk heavy hour (2-3pm)
+    "morning": 0.4,          # 40% chance
+    "early_morning": 0.5,    # 50% chance
 }
 
 # Track when we last played a segment
 last_segment_type = None
 tracks_since_segment = 0
-MIN_TRACKS_BETWEEN_SEGMENTS = 4  # Always play at least 4 tracks between segments
-MAX_TRACKS_WITHOUT_SEGMENT = 6   # Force segment after 6 tracks
+
+# Segment spacing by time period (min, max tracks between segments)
+SEGMENT_SPACING = {
+    "early_afternoon": (2, 3),  # Talk heavy: segment every 2-3 tracks
+    "late_night": (3, 5),       # More segments at night
+    "default": (4, 6),          # Normal: 4-6 tracks between segments
+}
+
+def get_segment_spacing():
+    """Get min/max tracks between segments for current time."""
+    profile = get_current_time_profile()
+    return SEGMENT_SPACING.get(profile["name"], SEGMENT_SPACING["default"])
 
 
 def decode_to_pcm(filepath: Path, start_time: float = 0, duration: float = None) -> subprocess.Popen:
