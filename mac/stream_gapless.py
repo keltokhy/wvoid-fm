@@ -58,12 +58,15 @@ ICECAST_STATUS_URL = os.environ.get(
     f"http://{ICECAST_HOST}:{ICECAST_PORT}/status-json.xsl",
 )
 
-# State
+# =============================================================================
+# RUNTIME STATE
+# =============================================================================
+
 running = True
 encoder_proc = None
 skip_current = False
 force_segment = False
-current_track_info = {
+current_track_info: dict = {
     "track": None,
     "type": None,
     "vibe": None,
@@ -339,8 +342,6 @@ MOOD_SIGNATURES = {
 
     # Rock - variable energy
     "rock": {"energy": 0.7, "warmth": 0.6, "vibe": "rock"},
-    "pink floyd": {"energy": 0.45, "warmth": 0.65, "vibe": "rock"},
-    "led zeppelin": {"energy": 0.75, "warmth": 0.7, "vibe": "rock"},
     "depeche mode": {"energy": 0.55, "warmth": 0.4, "vibe": "electronic"},
     "cocteau twins": {"energy": 0.4, "warmth": 0.6, "vibe": "indie"},
     "cherry-coloured": {"energy": 0.4, "warmth": 0.6, "vibe": "indie"},
@@ -603,20 +604,29 @@ def create_curated_queue(music: list[Path], size: int = 20) -> list[Path]:
     return selected
 
 
+SEGMENT_TYPES = [
+    "listener_dedication", "station_id", "hour_marker", "long_talk",
+    "monologue", "late_night", "music_history", "dedication",
+    "weather", "news", "poetry"
+]
+
+LONG_SEGMENT_TYPES = {"long_talk", "monologue", "late_night", "music_history"}
+SHORT_SEGMENT_TYPES = {"station_id", "hour_marker", "dedication"}
+
+
+def get_segment_type(seg: Path) -> str:
+    """Extract segment type from filename."""
+    name = seg.name.lower()
+    for stype in SEGMENT_TYPES:
+        if stype in name:
+            return stype
+    return "other"
+
+
 def select_segment_for_time(segments: list[Path]) -> Path:
     """Select a segment appropriate for the current time."""
     global last_segment_type
     profile = get_current_time_profile()
-
-    # Get segment type from filename
-    def get_segment_type(seg: Path) -> str:
-        name = seg.name.lower()
-        if "listener_dedication" in name:
-            return "listener_dedication"
-        for stype in ["station_id", "hour_marker", "long_talk", "monologue", "late_night", "music_history", "dedication", "weather", "news", "poetry"]:
-            if stype in name:
-                return stype
-        return "other"
 
     # PRIORITY: Always play listener dedications first (newest first)
     listener_dedications = sorted(
@@ -635,17 +645,17 @@ def select_segment_for_time(segments: list[Path]) -> Path:
         available = segments
 
     # Prefer longer segments late at night, shorter during day
-    if profile["name"] in ["late_night", "night"]:
-        long_segments = [s for s in available if "long_talk" in s.name or "monologue" in s.name or "late_night" in s.name or "music_history" in s.name]
-        if long_segments:
-            selected = random.choice(long_segments)
+    if profile["name"] in ("late_night", "night"):
+        long_segs = [s for s in available if get_segment_type(s) in LONG_SEGMENT_TYPES]
+        if long_segs:
+            selected = random.choice(long_segs)
             last_segment_type = get_segment_type(selected)
             return selected
 
-    if profile["name"] in ["morning", "afternoon"]:
-        short_segments = [s for s in available if "station_id" in s.name or "hour_marker" in s.name or "dedication" in s.name]
-        if short_segments:
-            selected = random.choice(short_segments)
+    if profile["name"] in ("morning", "afternoon", "early_afternoon"):
+        short_segs = [s for s in available if get_segment_type(s) in SHORT_SEGMENT_TYPES]
+        if short_segs:
+            selected = random.choice(short_segs)
             last_segment_type = get_segment_type(selected)
             return selected
 
@@ -699,36 +709,39 @@ def get_track_duration(filepath: Path) -> float | None:
     return None
 
 
-# Max track length before chopping (4 minutes)
-MAX_TRACK_DURATION = 240
-# Target chunk length for long tracks (2-3 minutes)
-CHUNK_MIN_DURATION = 120
-CHUNK_MAX_DURATION = 180
+# =============================================================================
+# PLAYBACK CONSTANTS
+# =============================================================================
 
-# Variable segment frequency by time period
-# Higher = more likely to play segment after each track
+# Track chopping (for long albums/mixes)
+MAX_TRACK_DURATION = 240  # 4 minutes - chop longer tracks
+CHUNK_MIN_DURATION = 120  # 2 minutes minimum chunk
+CHUNK_MAX_DURATION = 180  # 3 minutes maximum chunk
+
+# Segment probability by time period (higher = more talk segments)
 SEGMENT_PROBABILITY = {
-    "late_night": 0.7,       # 70% chance - more contemplative, more segments
-    "night": 0.5,            # 50% chance
-    "evening": 0.4,          # 40% chance
-    "afternoon": 0.4,        # 40% chance
-    "early_afternoon": 0.8,  # 80% chance - talk heavy hour (2-3pm)
-    "morning": 0.4,          # 40% chance
-    "early_morning": 0.5,    # 50% chance
+    "late_night": 0.7,
+    "night": 0.5,
+    "evening": 0.4,
+    "afternoon": 0.4,
+    "early_afternoon": 0.8,  # Talk heavy hour (2-3pm)
+    "morning": 0.4,
+    "early_morning": 0.5,
 }
 
-# Track when we last played a segment
+# Segment spacing (min, max tracks between segments)
+SEGMENT_SPACING = {
+    "early_afternoon": (2, 3),  # Talk heavy
+    "late_night": (3, 5),
+    "default": (4, 6),
+}
+
+# Runtime state
 last_segment_type = None
 tracks_since_segment = 0
 
-# Segment spacing by time period (min, max tracks between segments)
-SEGMENT_SPACING = {
-    "early_afternoon": (2, 3),  # Talk heavy: segment every 2-3 tracks
-    "late_night": (3, 5),       # More segments at night
-    "default": (4, 6),          # Normal: 4-6 tracks between segments
-}
 
-def get_segment_spacing():
+def get_segment_spacing() -> tuple[int, int]:
     """Get min/max tracks between segments for current time."""
     profile = get_current_time_profile()
     return SEGMENT_SPACING.get(profile["name"], SEGMENT_SPACING["default"])
