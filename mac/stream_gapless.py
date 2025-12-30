@@ -714,9 +714,9 @@ def get_track_duration(filepath: Path) -> float | None:
 # =============================================================================
 
 # Track chopping (for long albums/mixes)
-MAX_TRACK_DURATION = 240  # 4 minutes - chop longer tracks
-CHUNK_MIN_DURATION = 120  # 2 minutes minimum chunk
-CHUNK_MAX_DURATION = 180  # 3 minutes maximum chunk
+MAX_TRACK_DURATION = 150  # 2.5 minutes - chop longer tracks
+CHUNK_MIN_DURATION = 90   # 1.5 minutes minimum chunk
+CHUNK_MAX_DURATION = 150  # 2.5 minutes maximum chunk
 
 # Segment probability by time period (higher = more talk segments)
 SEGMENT_PROBABILITY = {
