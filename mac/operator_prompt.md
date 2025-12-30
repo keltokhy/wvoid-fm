@@ -24,7 +24,7 @@ ls mac/../output/segments/*.wav 2>/dev/null | wc -l
 ```
 If under 30, generate new ones:
 ```bash
-cd mac && uv run python headless_dj_generator.py --count 5
+cd mac/content_generator && uv run python headless_dj_generator.py --count 5
 ```
 Target mix: 2 station_id, 1 music_history, 1 monologue, 1 late_night/dedication
 
@@ -57,7 +57,7 @@ echo "- Listeners: [count]" >> /Volumes/K3/agent-working-space/memory/logs/$(dat
 ## Key Files
 - `mac/stream_gapless.py` - Main streamer
 - `mac/now_playing_server.py` - API server
-- `mac/headless_dj_generator.py` - Segment generator
+- `mac/content_generator/headless_dj_generator.py` - Segment generator
 - `mac/play_history.py` - Play tracking
 - `~/.wvoid/messages.json` - Listener messages
 - `/tmp/mac_stream.log` - Stream logs
