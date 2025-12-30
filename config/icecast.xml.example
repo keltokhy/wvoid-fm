@@ -1,0 +1,26 @@
+<icecast>
+    <location>Earth</location>
+    <admin>admin@localhost</admin>
+    <limits>
+        <clients>100</clients>
+        <sources>2</sources>
+    </limits>
+    <authentication>
+        <source-password>YOUR_SOURCE_PASSWORD</source-password>
+        <admin-user>admin</admin-user>
+        <admin-password>YOUR_ADMIN_PASSWORD</admin-password>
+    </authentication>
+    <hostname>localhost</hostname>
+    <listen-socket>
+        <port>8000</port>
+    </listen-socket>
+    <mount>
+        <mount-name>/stream</mount-name>
+        <charset>UTF-8</charset>
+    </mount>
+    <paths>
+        <logdir>/var/log/icecast</logdir>
+        <webroot>/usr/local/share/icecast/web</webroot>
+        <adminroot>/usr/local/share/icecast/admin</adminroot>
+    </paths>
+</icecast>

@@ -1,0 +1,13 @@
+[project]
+name = "audiobook-reader"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "beautifulsoup4>=4.14.3",
+    "chatterbox-tts>=0.1.6",
+    "ebooklib>=0.20",
+    "lxml>=6.0.2",
+    "onnx<1.17",
+]

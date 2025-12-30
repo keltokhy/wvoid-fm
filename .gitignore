@@ -1,0 +1,38 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.python-version
+
+# Chatterbox venv (separate from main)
+mac/chatterbox/.venv/
+
+# Output files (generated content)
+output/segments/*.wav
+output/segments/*.aiff
+output/segments/*.mp3
+output/scripts/*.json
+output/chopped_music/
+output/music/
+output/now_playing.json
+
+# Dev files
+command.txt
+README-dev.md
+
+# Local config with secrets
+mac/config.yaml
+config/icecast.xml
+
+# Voice reference (personal voice clone)
+mac/voice_reference/
+
+# Logs
+*.log
+/tmp/
+
+# OS
+.DS_Store
+
+# Lock files
+uv.lock
