@@ -46,6 +46,14 @@ else:
 
 SEGMENTS_DIR = Path(os.environ.get("WVOID_SEGMENTS_DIR", str(DEFAULT_SEGMENTS_DIR))).expanduser()
 
+# Podcast directory (longer-form audio content played at scheduled times)
+DEFAULT_PODCASTS_DIR = PROJECT_ROOT / "output" / "podcasts"
+PODCASTS_DIR = Path(os.environ.get("WVOID_PODCASTS_DIR", str(DEFAULT_PODCASTS_DIR))).expanduser()
+
+# Podcast schedule: hours when podcasts should play (24h format)
+# Plays at 12, 3, 6, 9 - both AM and PM
+PODCAST_HOURS = {0, 3, 6, 9, 12, 15, 18, 21}
+
 # Icecast config (local by default; override via env)
 ICECAST_HOST = os.environ.get("ICECAST_HOST", "localhost")
 ICECAST_PORT = int(os.environ.get("ICECAST_PORT", "8000"))
@@ -66,6 +74,7 @@ running = True
 encoder_proc = None
 skip_current = False
 force_segment = False
+last_podcast_hour: int | None = None  # Track which hour we last played a podcast
 current_track_info: dict = {
     "track": None,
     "type": None,
@@ -747,13 +756,68 @@ def get_segment_spacing() -> tuple[int, int]:
     return SEGMENT_SPACING.get(profile["name"], SEGMENT_SPACING["default"])
 
 
-def decode_to_pcm(filepath: Path, start_time: float = 0, duration: float = None) -> subprocess.Popen:
+# =============================================================================
+# PODCAST SCHEDULING
+# =============================================================================
+
+
+def get_all_podcasts() -> list[Path]:
+    """Get all podcast files from the podcasts directory."""
+    if not PODCASTS_DIR.exists():
+        return []
+    extensions = ("*.mp3", "*.flac", "*.m4a", "*.wav", "*.ogg", "*.aac")
+    podcasts = []
+    for ext in extensions:
+        podcasts.extend(PODCASTS_DIR.glob(ext))
+    return sorted(podcasts, key=lambda p: p.stat().st_mtime, reverse=True)
+
+
+def should_play_podcast() -> bool:
+    """Check if it's time to play a podcast (every 3 hours at 0, 3, 6, 9, 12, 15, 18, 21)."""
+    global last_podcast_hour
+    current_hour = datetime.now().hour
+
+    # Only trigger at podcast hours
+    if current_hour not in PODCAST_HOURS:
+        return False
+
+    # Don't repeat in the same hour
+    if last_podcast_hour == current_hour:
+        return False
+
+    return True
+
+
+def select_podcast(podcasts: list[Path]) -> Path | None:
+    """Select a podcast to play. Prefers unplayed ones, avoids recent repeats."""
+    if not podcasts:
+        return None
+
+    # If we have play history, prefer podcasts not played recently
+    if HISTORY_ENABLED:
+        try:
+            history = get_history()
+            # Filter out podcasts played in last 24 hours
+            unplayed = [p for p in podcasts if not history.was_played_recently(str(p), hours=24)]
+            if unplayed:
+                return random.choice(unplayed)
+        except Exception:
+            pass
+
+    # Fallback: random from most recent 5
+    return random.choice(podcasts[:5]) if len(podcasts) > 5 else random.choice(podcasts)
+
+
+
+
+def decode_to_pcm(filepath: Path, start_time: float = 0, duration: float = None, is_speech: bool = False) -> subprocess.Popen:
     """Decode audio file to raw PCM, output to stdout.
 
     Args:
         filepath: Audio file path
         start_time: Start position in seconds (for chopping long tracks)
         duration: Duration to extract in seconds (None = full track)
+        is_speech: If True, use louder normalization for speech content
     """
     cmd = ["ffmpeg", "-v", "warning"]
 
@@ -768,13 +832,18 @@ def decode_to_pcm(filepath: Path, start_time: float = 0, duration: float = None)
         cmd.extend(["-t", str(duration)])
 
     # Build audio filter chain
-    filters = ["loudnorm=I=-16:TP=-1.5:LRA=11"]
+    # Speech (segments/podcasts) gets louder normalization (-14 LUFS vs -16 for music)
+    if is_speech:
+        filters = ["loudnorm=I=-14:TP=-1.5:LRA=7"]
+    else:
+        filters = ["loudnorm=I=-16:TP=-1.5:LRA=11"]
 
-    # Add fade in/out (8 seconds each)
-    filters.append("afade=t=in:st=0:d=8")
-    if duration is not None and duration > 16:
-        fade_out_start = max(0, duration - 8)
-        filters.append(f"afade=t=out:st={fade_out_start}:d=8")
+    # Add fade in/out (8 seconds each) - only for music, not speech
+    if not is_speech:
+        filters.append("afade=t=in:st=0:d=8")
+        if duration is not None and duration > 16:
+            fade_out_start = max(0, duration - 8)
+            filters.append(f"afade=t=out:st={fade_out_start}:d=8")
 
     filters.append("aresample=44100")
 
@@ -819,8 +888,16 @@ def start_encoder() -> subprocess.Popen:
     )
 
 
-def pipe_track(filepath: Path, encoder: subprocess.Popen, start_time: float = 0, duration: float = None) -> bool:
-    """Decode a track and pipe PCM to encoder. Returns False if encoder died."""
+def pipe_track(filepath: Path, encoder: subprocess.Popen, start_time: float = 0, duration: float = None, is_speech: bool = False) -> bool:
+    """Decode a track and pipe PCM to encoder. Returns False if encoder died.
+
+    Args:
+        filepath: Audio file path
+        encoder: ffmpeg encoder subprocess
+        start_time: Start position for chopping
+        duration: Duration to play
+        is_speech: If True, use louder normalization (for segments/podcasts)
+    """
     global running, skip_current, force_segment
 
     if not running or encoder.poll() is not None:
@@ -828,7 +905,7 @@ def pipe_track(filepath: Path, encoder: subprocess.Popen, start_time: float = 0,
 
     decoder = None
     try:
-        decoder = decode_to_pcm(filepath, start_time, duration)
+        decoder = decode_to_pcm(filepath, start_time, duration, is_speech=is_speech)
 
         while running and not skip_current:
             chunk = decoder.stdout.read(8192)
@@ -866,7 +943,7 @@ def pipe_track(filepath: Path, encoder: subprocess.Popen, start_time: float = 0,
 
 
 def run():
-    global running, encoder_proc, force_segment, tracks_since_segment
+    global running, encoder_proc, force_segment, tracks_since_segment, last_podcast_hour
 
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
@@ -874,11 +951,13 @@ def run():
     log("=== WVOID-FM Gapless Streamer ===")
     log(f"Music sources: {len(MUSIC_DIRS)}")
     log(f"Segments: {SEGMENTS_DIR}")
+    log(f"Podcasts: {PODCASTS_DIR}")
     log(f"Streaming to: {ICECAST_URL}")
 
     all_music = get_all_music()
     all_segments = get_audio_files(SEGMENTS_DIR)
-    log(f"Total library: {len(all_music)} tracks, {len(all_segments)} segments")
+    all_podcasts = get_all_podcasts()
+    log(f"Total library: {len(all_music)} tracks, {len(all_segments)} segments, {len(all_podcasts)} podcasts")
 
     queue_size = 15  # Curate 15 tracks at a time
     tracks_since_reshuffle = 0
@@ -911,11 +990,38 @@ def run():
                     log(f"Time shifted to {new_profile['name']} - re-curating...")
                     break
 
+                # Check for scheduled podcast (every 3 hours)
+                if all_podcasts and should_play_podcast():
+                    podcast = select_podcast(all_podcasts)
+                    if podcast:
+                        podcast_name = clean_name(podcast)
+                        podcast_duration = get_track_duration(podcast)
+                        duration_str = f" ({int(podcast_duration // 60)}:{int(podcast_duration % 60):02d})" if podcast_duration else ""
+                        log(f"📻 PODCAST: {podcast_name}{duration_str}")
+                        update_now_playing(podcast_name, "podcast", None, current_profile["name"])
+                        if pipe_track(podcast, encoder_proc, is_speech=True):
+                            last_podcast_hour = datetime.now().hour
+                            # Record to history
+                            if HISTORY_ENABLED:
+                                try:
+                                    history = get_history()
+                                    history.record_play(
+                                        filepath=str(podcast),
+                                        track_name=podcast_name,
+                                        vibe="podcast",
+                                        time_period=current_profile["name"],
+                                        listeners=get_listener_count(),
+                                    )
+                                except Exception:
+                                    pass
+                        else:
+                            log("Podcast pipe failed, continuing...")
+
                 # Handle forced segment
                 if force_segment and all_segments:
                     seg = select_segment_for_time(all_segments)
                     log(f"🎙 [FORCED] {clean_name(seg, is_segment=True)}")
-                    pipe_track(seg, encoder_proc)
+                    pipe_track(seg, encoder_proc, is_speech=True)
                     force_segment = False
 
                 # Play track (chop if too long)
@@ -968,7 +1074,7 @@ def run():
                     is_listener_dedication = "listener_dedication" in seg.name.lower()
                     log(f"🎙 {seg_name}")
                     update_now_playing(seg_name, "segment", None, current_profile["name"])
-                    if not pipe_track(seg, encoder_proc):
+                    if not pipe_track(seg, encoder_proc, is_speech=True):
                         log("Segment pipe failed, reconnecting...")
                         break
                     # Delete listener dedications after playing (one-time use)

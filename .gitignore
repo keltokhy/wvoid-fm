@@ -14,6 +14,7 @@ output/segments/*.mp3
 output/scripts/*.json
 output/chopped_music/
 output/music/
+output/podcasts/
 output/now_playing.json
 
 # Dev files
