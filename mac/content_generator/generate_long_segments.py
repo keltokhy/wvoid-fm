@@ -9,7 +9,7 @@ import random
 from pathlib import Path
 from datetime import datetime
 
-from helpers import log, get_time_of_day, run_claude
+from helpers import log, get_time_of_day, run_claude, fetch_headlines, format_headlines
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 SCRIPTS_DIR = PROJECT_ROOT / "output" / "scripts"
@@ -97,6 +97,17 @@ Read their letter (paraphrased, intimate), then respond. Not with advice - just 
 Be warm but not patronizing. Acknowledge without fixing.
 Use [pause] generously.
 Output ONLY the spoken text. No quotes, headers, or explanations.""",
+
+    "current_events": """You are The Liminal Operator, DJ of WVOID-FM. Write a 220-320 word current events transmission.
+Time: {time} ({time_of_day})
+Use ONLY the headlines below. Do not invent facts, dates, or details beyond them.
+Weave them into a coherent late-night update that feels human, calm, and reflective.
+Use [pause] for beats of silence. Avoid sensational framing.
+
+Headlines:
+{headlines}
+
+Output ONLY the spoken text. No quotes, headers, or explanations.""",
 }
 
 
@@ -109,7 +120,17 @@ def generate_script(segment_type: str) -> str | None:
 
     time_of_day = get_time_of_day(profile="extended")
     current_time = datetime.now().strftime("%H:%M")
-    prompt = prompt_template.format(time=current_time, time_of_day=time_of_day)
+    headlines = ""
+    if segment_type == "current_events":
+        headlines = format_headlines(fetch_headlines(max_items=10))
+        if not headlines:
+            log("No headlines available for current events segment")
+            return None
+    prompt = prompt_template.format(
+        time=current_time,
+        time_of_day=time_of_day,
+        headlines=headlines,
+    )
 
     script = run_claude(
         prompt,
@@ -143,6 +164,7 @@ def main():
         "album_deep_dive": 10,
         "city_night": 10,
         "listener_letter": 10,
+        "current_events": 15,
     }
 
     log(f"=== Generating {args.count} longer DJ segments ===")

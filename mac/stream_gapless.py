@@ -619,7 +619,7 @@ SEGMENT_TYPES = [
     "weather", "news", "poetry"
 ]
 
-LONG_SEGMENT_TYPES = {"long_talk", "monologue", "late_night", "music_history"}
+LONG_SEGMENT_TYPES = {"long_talk", "monologue", "late_night", "music_history", "news"}
 SHORT_SEGMENT_TYPES = {"station_id", "hour_marker", "dedication"}
 
 
@@ -653,20 +653,28 @@ def select_segment_for_time(segments: list[Path]) -> Path:
     if not available:
         available = segments
 
-    # Prefer longer segments late at night, shorter during day
-    if profile["name"] in ("late_night", "night"):
-        long_segs = [s for s in available if get_segment_type(s) in LONG_SEGMENT_TYPES]
-        if long_segs:
-            selected = random.choice(long_segs)
-            last_segment_type = get_segment_type(selected)
-            return selected
+    # Prefer longer segments more often, with a bias by time period.
+    long_segs = [s for s in available if get_segment_type(s) in LONG_SEGMENT_TYPES]
+    short_segs = [s for s in available if get_segment_type(s) in SHORT_SEGMENT_TYPES]
+    long_bias = {
+        "late_night": 0.85,
+        "night": 0.8,
+        "early_afternoon": 0.8,
+        "evening": 0.7,
+        "afternoon": 0.65,
+        "morning": 0.6,
+        "early_morning": 0.6,
+    }.get(profile["name"], 0.6)
 
-    if profile["name"] in ("morning", "afternoon", "early_afternoon"):
-        short_segs = [s for s in available if get_segment_type(s) in SHORT_SEGMENT_TYPES]
-        if short_segs:
-            selected = random.choice(short_segs)
-            last_segment_type = get_segment_type(selected)
-            return selected
+    if long_segs and (not short_segs or random.random() < long_bias):
+        selected = random.choice(long_segs)
+        last_segment_type = get_segment_type(selected)
+        return selected
+
+    if short_segs:
+        selected = random.choice(short_segs)
+        last_segment_type = get_segment_type(selected)
+        return selected
 
     selected = random.choice(available)
     last_segment_type = get_segment_type(selected)
@@ -729,20 +737,22 @@ CHUNK_MAX_DURATION = 150  # 2.5 minutes maximum chunk
 
 # Segment probability by time period (higher = more talk segments)
 SEGMENT_PROBABILITY = {
-    "late_night": 0.7,
-    "night": 0.5,
-    "evening": 0.4,
-    "afternoon": 0.4,
-    "early_afternoon": 0.8,  # Talk heavy hour (2-3pm)
-    "morning": 0.4,
-    "early_morning": 0.5,
+    "late_night": 0.8,
+    "night": 0.7,
+    "evening": 0.6,
+    "afternoon": 0.6,
+    "early_afternoon": 0.9,  # Talk heavy hour (2-3pm)
+    "morning": 0.55,
+    "early_morning": 0.6,
 }
 
 # Segment spacing (min, max tracks between segments)
 SEGMENT_SPACING = {
-    "early_afternoon": (2, 3),  # Talk heavy
-    "late_night": (3, 5),
-    "default": (4, 6),
+    "early_afternoon": (1, 2),  # Talk heavy
+    "late_night": (2, 4),
+    "evening": (2, 4),
+    "morning": (3, 4),
+    "default": (3, 5),
 }
 
 # Runtime state

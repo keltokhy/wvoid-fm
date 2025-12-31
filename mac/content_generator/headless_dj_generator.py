@@ -23,6 +23,8 @@ from helpers import (
     preprocess_for_tts,
     run_claude,
     find_voice_reference,
+    fetch_headlines,
+    format_headlines,
 )
 
 # Paths
@@ -37,15 +39,16 @@ sys.path.insert(0, str(CHATTERBOX_DIR))
 
 # Segment types with weights
 SEGMENT_TYPES = [
-    ("station_id", 15),
-    ("hour_marker", 10),
-    ("song_intro", 15),
-    ("dedication", 10),
-    ("weather", 5),
-    ("monologue", 12),
-    ("music_history", 10),
-    ("late_night_thoughts", 8),
-    ("long_talk", 15),
+    ("station_id", 8),
+    ("hour_marker", 6),
+    ("song_intro", 8),
+    ("dedication", 6),
+    ("weather", 4),
+    ("news", 14),
+    ("monologue", 18),
+    ("music_history", 14),
+    ("late_night_thoughts", 12),
+    ("long_talk", 22),
 ]
 
 
@@ -123,9 +126,25 @@ Be profound without being pretentious. Warm but not saccharine. Present.
 Output ONLY the spoken text.""",
     }
 
-    prompt = prompts.get(segment_type)
-    if not prompt:
-        return None
+    if segment_type == "news":
+        headlines = format_headlines(fetch_headlines(max_items=8))
+        if not headlines:
+            log("No headlines available for news segment")
+            return None
+        prompt = f"""You are The Liminal Operator, DJ of WVOID-FM. Write a 120-180 word current events transmission.
+Time: {current_time} ({time_of_day})
+Use ONLY the headlines below. Do not invent facts, dates, or details beyond them.
+Weave them into a coherent late-night update that feels human, calm, and reflective.
+Use [pause] for beats of silence. Keep it grounded, not sensational.
+
+Headlines:
+{headlines}
+
+Output ONLY the spoken text."""
+    else:
+        prompt = prompts.get(segment_type)
+        if not prompt:
+            return None
 
     script = run_claude(prompt, timeout=60, min_length=10, strip_quotes=False)
     if script:
@@ -189,14 +208,14 @@ def generate_segment(segment_type: str | None = None, voice_ref: Path | None = N
     return None
 
 
-def run_batch(count: int, voice_ref: Path | None):
+def run_batch(count: int, voice_ref: Path | None, segment_type: str | None = None):
     """Generate a batch of segments."""
     log(f"=== Generating {count} DJ segments ===")
 
     success = 0
     for i in range(count):
         log(f"\n[{i+1}/{count}]")
-        if generate_segment(voice_ref=voice_ref):
+        if generate_segment(segment_type=segment_type, voice_ref=voice_ref):
             success += 1
         time.sleep(1)
 
@@ -227,6 +246,11 @@ def main():
     parser = argparse.ArgumentParser(description="WVOID-FM DJ Segment Generator")
     parser.add_argument("--count", type=int, default=10, help="Number of segments")
     parser.add_argument("--voice", type=Path, help="Voice reference file")
+    parser.add_argument(
+        "--type",
+        choices=[t for t, _ in SEGMENT_TYPES],
+        help="Force a specific segment type",
+    )
     parser.add_argument("--daemon", action="store_true", help="Run continuously")
     parser.add_argument("--interval", type=int, default=10, help="Minutes between generations")
 
@@ -239,7 +263,7 @@ def main():
     if args.daemon:
         run_daemon(voice_ref, args.interval)
     else:
-        run_batch(args.count, voice_ref)
+        run_batch(args.count, voice_ref, args.type)
 
 
 if __name__ == "__main__":
