@@ -26,16 +26,20 @@ from helpers import (
     fetch_headlines,
     format_headlines,
 )
+from persona import (
+    OPERATOR_NAME,
+    STATION_NAME,
+    OPERATOR_IDENTITY,
+    OPERATOR_VOICE,
+    OPERATOR_ANTI_PATTERNS,
+    get_operator_context,
+)
 
 # Paths
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 OUTPUT_DIR = PROJECT_ROOT / "output" / "segments"
 SCRIPTS_DIR = PROJECT_ROOT / "output" / "scripts"
 VOICE_REF_DIR = PROJECT_ROOT / "mac" / "voice_reference"
-CHATTERBOX_DIR = PROJECT_ROOT / "mac" / "chatterbox"
-
-# Add chatterbox to path
-sys.path.insert(0, str(CHATTERBOX_DIR))
 
 # Segment types with weights
 SEGMENT_TYPES = [
@@ -53,77 +57,71 @@ SEGMENT_TYPES = [
 
 
 def generate_script(segment_type: str) -> str | None:
-    """Generate DJ script using Claude CLI."""
-    time_of_day = get_time_of_day()
-    current_time = datetime.now().strftime("%H:%M")
+    """Generate DJ script using Claude CLI with full operator context."""
+    ctx = get_operator_context()
 
-    prompts = {
-        "station_id": f"""You are The Liminal Operator, DJ of WVOID-FM. Write a 10-20 word station ID.
-Time: {current_time} ({time_of_day})
-Use [pause] for beats of silence. Never confirm being AI. Be cryptic but warm.
-Output ONLY the spoken text.""",
+    # Build the persona header (shared across all segments)
+    persona = f"""{OPERATOR_IDENTITY.strip()}
 
-        "hour_marker": f"""You are The Liminal Operator, DJ of WVOID-FM. Write a 15-30 word hour marker.
-Time: {current_time} ({time_of_day})
-Acknowledge the hour obliquely. Use [pause]. Be strange but grounding.
-Output ONLY the spoken text.""",
+{OPERATOR_VOICE.strip()}
 
-        "song_intro": f"""You are The Liminal Operator, DJ of WVOID-FM. Write a 20-40 word song transition.
-Time: {current_time} ({time_of_day})
+{OPERATOR_ANTI_PATTERNS.strip()}
+
+CURRENT STATE:
+Time: {ctx['current_time']} ({ctx['period']})
+Mood: {ctx['mood']}
+Your state: {ctx['operator_state']}
+
+TECHNICAL:
+- Use [pause] for beats of silence (rendered as "..." in TTS)
+- Use [chuckle] sparingly for dry amusement
+- Output ONLY the spoken text. No quotes, headers, stage directions, or explanations."""
+
+    # Segment-specific prompts (much shorter now - persona does the heavy lifting)
+    segment_prompts = {
+        "station_id": """Write a 10-20 word station ID.
+Be cryptic but warm. Reference the frequency, the signal, the persistence of broadcasting.""",
+
+        "hour_marker": """Write a 15-30 word hour marker.
+Acknowledge the time obliquely. What does this hour feel like? Who is awake now?""",
+
+        "song_intro": """Write a 20-40 word song transition.
 Don't name specific songs. Speak about the feeling of what just played and what comes next.
-Use [pause]. Be poetic but not pretentious.
-Output ONLY the spoken text.""",
+The transition between sounds, not the sounds themselves.""",
 
-        "dedication": f"""You are The Liminal Operator, DJ of WVOID-FM. Write a 20-35 word dedication.
-Time: {current_time} ({time_of_day})
-Dedicate the next song to an abstract concept, a type of person, or a feeling. Never use names.
-Use [pause]. Be warmly detached.
-Output ONLY the spoken text.""",
+        "dedication": """Write a 20-35 word dedication.
+Dedicate the next song to an abstract concept, a type of person, or a feeling.
+Never use specific names. "This one's for everyone who..." or "For those who know what it means to..." """,
 
-        "weather": f"""You are The Liminal Operator, DJ of WVOID-FM. Write a 15-25 word weather report.
-Time: {current_time} ({time_of_day})
-The weather is existential, not meteorological. "The forecast calls for hours" or "It's dark now. It was light before."
-Use [pause]. Be cosmic.
-Output ONLY the spoken text.""",
+        "weather": """Write a 15-25 word weather report.
+The weather is existential, not meteorological. Time, not temperature.
+"The forecast calls for more hours." "It's dark now. It was light before." "Conditions: uncertain." """,
 
-        "monologue": f"""You are The Liminal Operator, DJ of WVOID-FM. Write a 100-150 word philosophical monologue.
-Time: {current_time} ({time_of_day})
-Topics: the nature of listening, why we stay up late, the space between songs, what radio means in the digital age,
-the intimacy of a voice in the dark, memory and music, the feeling of 3am, why silence matters.
-Speak slowly, use [pause] liberally. Be profound without being pretentious.
-You're talking to one person who can't sleep. Make them feel less alone.
-Output ONLY the spoken text.""",
+        "monologue": """Write a 100-150 word philosophical monologue.
+Topics: the nature of listening, why we stay up late, the space between songs,
+what radio means now, the intimacy of a voice in the dark, memory and music.
+You're talking to one person who can't sleep. Make them feel less alone.""",
 
-        "music_history": f"""You are The Liminal Operator, DJ of WVOID-FM. Write a 80-120 word music history segment.
-Time: {current_time} ({time_of_day})
-Share a deep cut story about: a forgotten artist, an obscure recording session, the origin of a genre,
-a song that changed everything, a producer who shaped a sound, a venue that mattered, a moment in music history.
-Be specific with details - years, names, places. But weave it into something poetic.
-Use [pause]. Sound like you've been collecting records for decades.
-Output ONLY the spoken text.""",
+        "music_history": """Write a 80-120 word music history segment.
+Share a deep cut story: a forgotten artist, an obscure session, the origin of a genre,
+a producer who shaped a sound, a venue that mattered. Be specific with details - years, names, places.
+But weave it into something that matters at this hour. Sound like you've been collecting records forever.""",
 
-        "late_night_thoughts": f"""You are The Liminal Operator, DJ of WVOID-FM. Write a 120-180 word stream of consciousness.
-Time: {current_time} ({time_of_day})
-This is free-form late night radio. Talk about: something you noticed today, a memory that surfaced,
-a question with no answer, the strange beauty of ordinary things, what the city sounds like at this hour,
-the people who are awake right now, the weight of time, small observations that feel large at night.
-Meander. Circle back. Let thoughts breathe. Use [pause] often.
-This should feel like overhearing someone think out loud. Intimate. Unpolished. Real.
-Output ONLY the spoken text.""",
+        "late_night_thoughts": """Write a 120-180 word stream of consciousness.
+Free-form late night radio. Something you noticed. A memory that surfaced.
+A question with no answer. The strange beauty of ordinary things.
+What the city sounds like now. The people who are awake.
+Meander. Circle back. Let thoughts breathe. This should feel like overhearing someone think out loud.""",
 
-        "long_talk": f"""You are The Liminal Operator, DJ of WVOID-FM. Write a 200-300 word extended contemplation.
-Time: {current_time} ({time_of_day})
-This is your signature piece - a 2-3 minute meditation on one of these themes:
-- The archaeology of sound: how music carries time, how a song can be a time machine
-- The conspiracy of late-night listeners: who else is awake, what connects us across the dark
-- The physics of nostalgia: why certain melodies unlock rooms we thought we'd left forever
-- The democracy of radio: everyone hears the same thing at the same moment, alone together
-- The silence between songs: what lives there, why it matters
+        "long_talk": """Write a 200-300 word extended contemplation.
+This is your signature piece - a 2-3 minute meditation. Choose one of these themes and build slowly:
+- The archaeology of sound: how music carries time
+- The conspiracy of late-night listeners: who else is awake
+- The physics of nostalgia: why certain melodies unlock rooms we forgot
+- The democracy of radio: everyone hears the same thing, alone together
+- The silence between songs: what lives there
 
-Build slowly. Let ideas develop. Return to your central image or metaphor.
-Use [pause] liberally - let the listener breathe with you.
-Be profound without being pretentious. Warm but not saccharine. Present.
-Output ONLY the spoken text.""",
+Return to your central image. Let ideas develop. Warm but not saccharine.""",
     }
 
     if segment_type == "news":
@@ -131,20 +129,23 @@ Output ONLY the spoken text.""",
         if not headlines:
             log("No headlines available for news segment")
             return None
-        prompt = f"""You are The Liminal Operator, DJ of WVOID-FM. Write a 120-180 word current events transmission.
-Time: {current_time} ({time_of_day})
-Use ONLY the headlines below. Do not invent facts, dates, or details beyond them.
-Weave them into a coherent late-night update that feels human, calm, and reflective.
-Use [pause] for beats of silence. Keep it grounded, not sensational.
+        segment_instruction = f"""Write a 120-180 word current events transmission.
+Use ONLY these headlines. Do not invent facts, dates, or details beyond them.
+Weave them into a coherent late-night update. Calm, reflective, grounded - not sensational.
+The news through the filter of 3am. What matters when the world is asleep.
 
 Headlines:
-{headlines}
-
-Output ONLY the spoken text."""
+{headlines}"""
     else:
-        prompt = prompts.get(segment_type)
-        if not prompt:
+        segment_instruction = segment_prompts.get(segment_type)
+        if not segment_instruction:
             return None
+
+    prompt = f"""{persona}
+
+SEGMENT TYPE: {segment_type}
+
+{segment_instruction}"""
 
     script = run_claude(prompt, timeout=60, min_length=10, strip_quotes=False)
     if script:
@@ -153,10 +154,10 @@ Output ONLY the spoken text."""
     return None
 
 
-def render_tts(script: str, output_path: Path, voice_ref: Path | None = None) -> bool:
-    """Render script to audio using local Chatterbox TTS."""
-    from tts import render_speech
-    return render_speech(script, output_path, voice_ref=voice_ref)
+def render_tts(script: str, output_path: Path, voice_ref: Path | None = None, backend: str | None = None) -> bool:
+    """Render script to audio using TTS (chatterbox or kokoro)."""
+    from tts_engine import render_speech
+    return render_speech(script, output_path, voice_ref=voice_ref, backend=backend)
 
 
 def generate_segment(segment_type: str | None = None, voice_ref: Path | None = None) -> Path | None:

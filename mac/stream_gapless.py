@@ -74,6 +74,7 @@ running = True
 encoder_proc = None
 skip_current = False
 force_segment = False
+force_podcast = False  # Play a podcast next
 last_podcast_hour: int | None = None  # Track which hour we last played a podcast
 current_track_info: dict = {
     "track": None,
@@ -632,12 +633,26 @@ def get_segment_type(seg: Path) -> str:
     return "other"
 
 
+def parse_segment_time(seg: Path) -> int | None:
+    """Extract target hour from segment filename (e.g., hour_marker_20251231_1800_xxx.wav -> 18)."""
+    # Pattern: *_YYYYMMDD_HHMM_*.wav
+    name = seg.stem
+    parts = name.split("_")
+    for part in parts:
+        if len(part) == 4 and part.isdigit():
+            hour = int(part[:2])
+            if 0 <= hour <= 23:
+                return hour
+    return None
+
+
 def select_segment_for_time(segments: list[Path]) -> Path:
     """Select a segment appropriate for the current time."""
     global last_segment_type
     profile = get_current_time_profile()
+    current_hour = datetime.now().hour
 
-    # PRIORITY: Always play listener dedications first (newest first)
+    # PRIORITY 1: Always play listener dedications first (newest first)
     listener_dedications = sorted(
         [s for s in segments if "listener_dedication" in s.name.lower()],
         key=lambda x: x.stat().st_mtime,
@@ -648,7 +663,26 @@ def select_segment_for_time(segments: list[Path]) -> Path:
         last_segment_type = "listener_dedication"
         return selected
 
-    # Filter out recently played type to avoid repetition
+    # PRIORITY 2: Prefer time-tagged segments for current hour (+/- 1 hour window)
+    time_matched = []
+    for seg in segments:
+        seg_hour = parse_segment_time(seg)
+        if seg_hour is not None:
+            # Match current hour or adjacent hours
+            hour_diff = min(abs(seg_hour - current_hour), 24 - abs(seg_hour - current_hour))
+            if hour_diff <= 1:
+                time_matched.append(seg)
+
+    # Filter out recently played type
+    if time_matched:
+        available = [s for s in time_matched if get_segment_type(s) != last_segment_type]
+        if available:
+            selected = random.choice(available)
+            last_segment_type = get_segment_type(selected)
+            log(f"   (time-matched for {current_hour:02d}:00)")
+            return selected
+
+    # FALLBACK: Original selection logic for non-time-tagged segments
     available = [s for s in segments if get_segment_type(s) != last_segment_type]
     if not available:
         available = segments
@@ -935,6 +969,9 @@ def pipe_track(filepath: Path, encoder: subprocess.Popen, start_time: float = 0,
             elif cmd == "segment":
                 log("Will play segment next...")
                 force_segment = True
+            elif cmd == "podcast":
+                log("Will play podcast next...")
+                force_podcast = True
 
         return True
 
@@ -953,7 +990,7 @@ def pipe_track(filepath: Path, encoder: subprocess.Popen, start_time: float = 0,
 
 
 def run():
-    global running, encoder_proc, force_segment, tracks_since_segment, last_podcast_hour
+    global running, encoder_proc, force_segment, force_podcast, tracks_since_segment, last_podcast_hour
 
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
@@ -1000,15 +1037,17 @@ def run():
                     log(f"Time shifted to {new_profile['name']} - re-curating...")
                     break
 
-                # Check for scheduled podcast (every 3 hours)
-                if all_podcasts and should_play_podcast():
+                # Check for scheduled or forced podcast
+                if all_podcasts and (force_podcast or should_play_podcast()):
                     podcast = select_podcast(all_podcasts)
                     if podcast:
                         podcast_name = clean_name(podcast)
                         podcast_duration = get_track_duration(podcast)
                         duration_str = f" ({int(podcast_duration // 60)}:{int(podcast_duration % 60):02d})" if podcast_duration else ""
-                        log(f"📻 PODCAST: {podcast_name}{duration_str}")
+                        prefix = "📻 [FORCED] PODCAST:" if force_podcast else "📻 PODCAST:"
+                        log(f"{prefix} {podcast_name}{duration_str}")
                         update_now_playing(podcast_name, "podcast", None, current_profile["name"])
+                        force_podcast = False  # Clear before playback
                         if pipe_track(podcast, encoder_proc, is_speech=True):
                             last_podcast_hour = datetime.now().hour
                             # Record to history

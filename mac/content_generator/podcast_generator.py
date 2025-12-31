@@ -34,10 +34,6 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 OUTPUT_DIR = PROJECT_ROOT / "output" / "podcasts"
 SCRIPTS_DIR = PROJECT_ROOT / "output" / "scripts"
 VOICE_REF_DIR = PROJECT_ROOT / "mac" / "voice_reference"
-CHATTERBOX_DIR = PROJECT_ROOT / "mac" / "chatterbox"
-
-# Add chatterbox to path
-sys.path.insert(0, str(CHATTERBOX_DIR))
 
 
 # Podcast topics - longer-form explorations
@@ -167,7 +163,7 @@ def render_podcast(script: str, output_path: Path, voice_ref: Path | None = None
 
     For long scripts, renders in chunks and concatenates.
     """
-    from tts import render_speech
+    from tts_engine import render_speech
 
     # Split into chunks for TTS (Chatterbox works better with shorter segments)
     MAX_CHUNK_WORDS = 100

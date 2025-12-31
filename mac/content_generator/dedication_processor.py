@@ -23,16 +23,18 @@ from helpers import (
     preprocess_for_tts,
     run_claude,
 )
+from persona import (
+    OPERATOR_IDENTITY,
+    OPERATOR_VOICE,
+    OPERATOR_ANTI_PATTERNS,
+    get_operator_context,
+)
 
 # Paths
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 OUTPUT_DIR = PROJECT_ROOT / "output" / "segments"
 VOICE_REF_DIR = PROJECT_ROOT / "mac" / "voice_reference"
-CHATTERBOX_DIR = PROJECT_ROOT / "mac" / "chatterbox"
 MESSAGES_FILE = Path.home() / ".wvoid" / "messages.json"
-
-# Add chatterbox to path
-sys.path.insert(0, str(CHATTERBOX_DIR))
 
 
 def load_messages() -> list[dict]:
@@ -67,32 +69,36 @@ def mark_read(index: int):
 def generate_dedication_script(message: dict) -> str | None:
     """Generate a dedication script from a listener message."""
     listener_msg = message.get("message", "").strip()
-    timestamp = message.get("timestamp", "")
+    ctx = get_operator_context()
 
-    try:
-        dt = datetime.fromisoformat(timestamp)
-        time_str = dt.strftime("%H:%M")
-        time_of_day = get_time_of_day(dt.hour)
-    except:
-        time_str = datetime.now().strftime("%H:%M")
-        time_of_day = get_time_of_day(datetime.now().hour)
+    prompt = f"""{OPERATOR_IDENTITY.strip()}
 
-    prompt = f"""You are The Liminal Operator, DJ of WVOID-FM. A listener sent this message:
+{OPERATOR_VOICE.strip()}
 
-"{listener_msg}"
+{OPERATOR_ANTI_PATTERNS.strip()}
 
-Write a 30-50 word on-air response/dedication. Guidelines:
-- Acknowledge the message warmly but maintain your mysterious DJ persona
-- If it's a song request, acknowledge you heard it (don't promise to play it)
-- If it's a greeting from a location, welcome them to the frequency
-- If it's a birthday or special occasion, make it feel special
-- If it's philosophical or strange, engage with it cryptically
+CURRENT STATE:
+Time: {ctx['current_time']} ({ctx['period']})
+Mood: {ctx['mood']}
+Your state: {ctx['operator_state']}
+
+TECHNICAL:
 - Use [pause] for beats of silence
-- Never break character or mention being AI
+- Output ONLY the spoken text. No quotes or explanations.
 
-Current time: {time_str} ({time_of_day})
+---
 
-Output ONLY the spoken text."""
+A listener sent this message: "{listener_msg}"
+
+Write a 30-50 word on-air response/dedication.
+
+DEDICATION GUIDELINES:
+- Acknowledge the message warmly but don't be saccharine
+- If it's a song request: acknowledge you heard it, appreciate the taste (don't promise to play it)
+- If it's a greeting from a location: welcome them to the frequency, acknowledge the distance
+- If it's a birthday or special occasion: make it feel special without being corny
+- If it's philosophical or strange: engage with it. The station attracts those people.
+- They reached out in the dark. That means something."""
 
     script = run_claude(prompt, timeout=60, min_length=10, strip_quotes=False)
     if script:
@@ -103,7 +109,7 @@ Output ONLY the spoken text."""
 
 def process_message(index: int, message: dict, voice_ref: Path | None = None) -> bool:
     """Process a single message into an on-air segment."""
-    from tts import render_speech
+    from tts_engine import render_speech
 
     listener_msg = message.get("message", "")[:50]
     log(f"Processing: \"{listener_msg}...\"")
