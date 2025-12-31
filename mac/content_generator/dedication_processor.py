@@ -12,11 +12,17 @@ Usage:
 
 import json
 import argparse
-import subprocess
 import time
 import sys
 from pathlib import Path
 from datetime import datetime
+
+from helpers import (
+    log,
+    get_time_of_day,
+    preprocess_for_tts,
+    run_claude,
+)
 
 # Paths
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -27,11 +33,6 @@ MESSAGES_FILE = Path.home() / ".wvoid" / "messages.json"
 
 # Add chatterbox to path
 sys.path.insert(0, str(CHATTERBOX_DIR))
-
-
-def log(msg: str):
-    ts = datetime.now().strftime("%H:%M:%S")
-    print(f"[{ts}] {msg}", flush=True)
 
 
 def load_messages() -> list[dict]:
@@ -61,16 +62,6 @@ def mark_read(index: int):
         messages[index]["read"] = True
         messages[index]["processed_at"] = datetime.now().isoformat()
         save_messages(messages)
-
-
-def get_time_of_day(hour: int) -> str:
-    if 6 <= hour < 10:
-        return "morning"
-    elif 10 <= hour < 18:
-        return "daytime"
-    elif 18 <= hour < 24:
-        return "evening"
-    return "late_night"
 
 
 def generate_dedication_script(message: dict) -> str | None:
@@ -103,28 +94,11 @@ Current time: {time_str} ({time_of_day})
 
 Output ONLY the spoken text."""
 
-    try:
-        result = subprocess.run(
-            ["claude", "-p", prompt],
-            capture_output=True,
-            text=True,
-            timeout=60
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            script = result.stdout.strip().replace("*", "").replace("_", "")
-            if len(script) > 10:
-                return script
-    except Exception as e:
-        log(f"Claude error: {e}")
+    script = run_claude(prompt, timeout=60, min_length=10, strip_quotes=False)
+    if script:
+        return script
 
     return None
-
-
-def preprocess_for_tts(text: str) -> str:
-    text = text.replace("[pause]", "...")
-    text = text.replace("[chuckle]", "heh...")
-    text = text.replace('"', '').replace("'", "'")
-    return text.strip()
 
 
 def process_message(index: int, message: dict, voice_ref: Path | None = None) -> bool:
@@ -141,7 +115,7 @@ def process_message(index: int, message: dict, voice_ref: Path | None = None) ->
 
     log(f"Script: {script[:60]}...")
 
-    tts_text = preprocess_for_tts(script)
+    tts_text = preprocess_for_tts(script, include_cough=False)
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

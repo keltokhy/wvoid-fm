@@ -12,11 +12,18 @@ Usage:
 import json
 import random
 import argparse
-import subprocess
 import time
 import sys
 from pathlib import Path
 from datetime import datetime
+
+from helpers import (
+    log,
+    get_time_of_day,
+    preprocess_for_tts,
+    run_claude,
+    find_voice_reference,
+)
 
 # Paths
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -40,22 +47,6 @@ SEGMENT_TYPES = [
     ("late_night_thoughts", 8),
     ("long_talk", 15),
 ]
-
-
-def log(msg: str):
-    ts = datetime.now().strftime("%H:%M:%S")
-    print(f"[{ts}] {msg}", flush=True)
-
-
-def get_time_of_day() -> str:
-    hour = datetime.now().hour
-    if 6 <= hour < 10:
-        return "morning"
-    elif 10 <= hour < 18:
-        return "daytime"
-    elif 18 <= hour < 24:
-        return "evening"
-    return "late_night"
 
 
 def generate_script(segment_type: str) -> str | None:
@@ -136,30 +127,11 @@ Output ONLY the spoken text.""",
     if not prompt:
         return None
 
-    try:
-        result = subprocess.run(
-            ["claude", "-p", prompt],
-            capture_output=True,
-            text=True,
-            timeout=60
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            script = result.stdout.strip().replace("*", "").replace("_", "")
-            if len(script) > 10:
-                return script
-    except Exception as e:
-        log(f"Claude error: {e}")
+    script = run_claude(prompt, timeout=60, min_length=10, strip_quotes=False)
+    if script:
+        return script
 
     return None
-
-
-def preprocess_for_tts(text: str) -> str:
-    """Convert script tags to TTS-friendly format."""
-    text = text.replace("[pause]", "...")
-    text = text.replace("[chuckle]", "heh...")
-    text = text.replace("[cough]", "ahem...")
-    text = text.replace('"', '').replace("'", "'")
-    return text.strip()
 
 
 def render_tts(script: str, output_path: Path, voice_ref: Path | None = None) -> bool:
@@ -260,14 +232,9 @@ def main():
 
     args = parser.parse_args()
 
-    voice_ref = args.voice
-    if not voice_ref:
-        for ext in [".wav", ".m4a", ".mp3"]:
-            candidates = list(VOICE_REF_DIR.glob(f"*{ext}"))
-            if candidates:
-                voice_ref = candidates[0]
-                log(f"Using voice reference: {voice_ref}")
-                break
+    voice_ref = find_voice_reference(VOICE_REF_DIR, args.voice)
+    if voice_ref and not args.voice:
+        log(f"Using voice reference: {voice_ref}")
 
     if args.daemon:
         run_daemon(voice_ref, args.interval)

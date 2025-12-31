@@ -6,32 +6,13 @@ Uses Claude for scripts and saves to output/scripts for later TTS rendering.
 
 import json
 import random
-import subprocess
 from pathlib import Path
 from datetime import datetime
 
+from helpers import log, get_time_of_day, run_claude
+
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 SCRIPTS_DIR = PROJECT_ROOT / "output" / "scripts"
-
-
-def log(msg: str):
-    ts = datetime.now().strftime("%H:%M:%S")
-    print(f"[{ts}] {msg}", flush=True)
-
-
-def get_time_of_day() -> str:
-    hour = datetime.now().hour
-    if 6 <= hour < 10:
-        return "morning"
-    elif 10 <= hour < 14:
-        return "daytime"
-    elif 14 <= hour < 15:
-        return "early_afternoon"
-    elif 15 <= hour < 18:
-        return "afternoon"
-    elif 18 <= hour < 24:
-        return "evening"
-    return "late_night"
 
 
 LONG_SEGMENT_PROMPTS = {
@@ -126,26 +107,18 @@ def generate_script(segment_type: str) -> str | None:
         log(f"Unknown segment type: {segment_type}")
         return None
 
-    time_of_day = get_time_of_day()
+    time_of_day = get_time_of_day(profile="extended")
     current_time = datetime.now().strftime("%H:%M")
     prompt = prompt_template.format(time=current_time, time_of_day=time_of_day)
 
-    try:
-        result = subprocess.run(
-            ["claude", "-p", prompt, "--model", "claude-sonnet-4-20250514"],
-            capture_output=True,
-            text=True,
-            timeout=120
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            script = result.stdout.strip()
-            # Clean up any markdown artifacts
-            script = script.replace("*", "").replace("_", "")
-            if script.startswith('"') and script.endswith('"'):
-                script = script[1:-1]
-            return script
-    except Exception as e:
-        log(f"Claude error: {e}")
+    script = run_claude(
+        prompt,
+        timeout=120,
+        model="claude-sonnet-4-20250514",
+        strip_quotes=True,
+    )
+    if script:
+        return script
 
     return None
 
@@ -200,7 +173,7 @@ def main():
 
         data = {
             "type": seg_type,
-            "time_of_day": get_time_of_day(),
+            "time_of_day": get_time_of_day(profile="extended"),
             "generated_at": datetime.now().isoformat(),
             "script": script,
             "word_count": word_count,
