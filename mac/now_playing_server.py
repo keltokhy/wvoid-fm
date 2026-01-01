@@ -23,6 +23,24 @@ try:
 except ImportError:
     HISTORY_ENABLED = False
 
+# Import Discogs lookup and QR generation
+try:
+    from discogs_lookup import search_discogs, DiscogsResult, HAS_CREDENTIALS as DISCOGS_HAS_CREDS
+    DISCOGS_ENABLED = True
+except ImportError:
+    DISCOGS_ENABLED = False
+    DISCOGS_HAS_CREDS = False
+
+try:
+    from qr_generator import generate_qr_png, generate_qr_data_url, HAS_QRCODE
+    QR_ENABLED = HAS_QRCODE
+except ImportError:
+    QR_ENABLED = False
+
+# Discogs lookup cache to avoid repeated lookups for the same track
+_discogs_cache: dict[str, dict | None] = {}
+_discogs_last_track: str | None = None
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_NOW_PLAYING_FILE = PROJECT_ROOT / "output" / "now_playing.json"
 MESSAGES_FILE = Path.home() / ".wvoid" / "messages.json"
@@ -103,6 +121,37 @@ class NowPlayingHandler(http.server.BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps(messages).encode())
             except BrokenPipeError:
                 pass
+        elif self.path == "/discogs" or self.path == "/discogs/":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            discogs_data = get_discogs_info()
+            try:
+                self.wfile.write(json.dumps(discogs_data).encode())
+            except BrokenPipeError:
+                pass
+        elif self.path == "/qr" or self.path == "/qr/":
+            qr_bytes = get_qr_code()
+            if qr_bytes:
+                self.send_response(200)
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Cache-Control", "public, max-age=60")
+                self.end_headers()
+                try:
+                    self.wfile.write(qr_bytes)
+                except BrokenPipeError:
+                    pass
+            else:
+                self.send_response(404)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                try:
+                    self.wfile.write(json.dumps({"error": "No Discogs info available"}).encode())
+                except BrokenPipeError:
+                    pass
         else:
             self.send_response(404)
             self.end_headers()
@@ -336,9 +385,105 @@ def get_now_playing() -> dict:
     return data
 
 
+def get_discogs_info() -> dict:
+    """Get Discogs info for the currently playing track.
+
+    Returns a dict with Discogs release info, or an error/status message.
+    Caches results to avoid repeated API calls for the same track.
+    """
+    global _discogs_cache, _discogs_last_track
+
+    if not DISCOGS_ENABLED:
+        return {"enabled": False, "message": "Discogs lookup not available"}
+
+    if not DISCOGS_HAS_CREDS:
+        return {
+            "enabled": False,
+            "message": "Discogs API requires authentication",
+            "setup": "Set DISCOGS_TOKEN env var. Get token at https://www.discogs.com/settings/developers"
+        }
+
+    # Get current track
+    now_playing = get_now_playing()
+    track_name = now_playing.get("track")
+    track_type = now_playing.get("type")
+    vibe = now_playing.get("vibe")
+
+    # Only look up music tracks, not segments or podcasts
+    if not track_name or track_type != "music":
+        return {"enabled": True, "track": track_name, "discogs": None, "reason": "Not a music track"}
+
+    # Check cache
+    if track_name in _discogs_cache:
+        cached = _discogs_cache[track_name]
+        if cached is None:
+            return {"enabled": True, "track": track_name, "discogs": None, "reason": "Not found on Discogs"}
+        return {"enabled": True, "track": track_name, "discogs": cached}
+
+    # Perform lookup (only if track changed)
+    if track_name != _discogs_last_track:
+        _discogs_last_track = track_name
+        result = search_discogs(track_name, vibe)
+
+        if result:
+            discogs_data = {
+                "release_id": result.release_id,
+                "title": result.title,
+                "artist": result.artist,
+                "year": result.year,
+                "url": result.url,
+                "thumb_url": result.thumb_url,
+                "label": result.label,
+                "format": result.format,
+            }
+            _discogs_cache[track_name] = discogs_data
+            return {"enabled": True, "track": track_name, "discogs": discogs_data}
+        else:
+            _discogs_cache[track_name] = None
+            return {"enabled": True, "track": track_name, "discogs": None, "reason": "Not found on Discogs"}
+
+    # Track hasn't changed, return cached or pending
+    if track_name in _discogs_cache:
+        cached = _discogs_cache[track_name]
+        if cached is None:
+            return {"enabled": True, "track": track_name, "discogs": None, "reason": "Not found on Discogs"}
+        return {"enabled": True, "track": track_name, "discogs": cached}
+
+    return {"enabled": True, "track": track_name, "discogs": None, "reason": "Lookup pending"}
+
+
+def get_qr_code() -> bytes | None:
+    """Get QR code PNG for the current track's Discogs page.
+
+    Returns PNG bytes or None if no Discogs info available.
+    """
+    if not QR_ENABLED:
+        return None
+
+    discogs_info = get_discogs_info()
+    discogs_data = discogs_info.get("discogs")
+
+    if not discogs_data or not discogs_data.get("url"):
+        return None
+
+    return generate_qr_png(discogs_data["url"])
+
+
 def run():
     with socketserver.TCPServer(("", PORT), NowPlayingHandler) as httpd:
         print(f"Now Playing API running on http://localhost:{PORT}/now-playing")
+        print(f"  /discogs  - Current track's Discogs info")
+        print(f"  /qr       - QR code for Discogs page (PNG)")
+        if DISCOGS_ENABLED:
+            if DISCOGS_HAS_CREDS:
+                print("Discogs lookup: enabled (credentials found)")
+            else:
+                print("Discogs lookup: disabled (no DISCOGS_TOKEN env var)")
+                print("  Set DISCOGS_TOKEN or DISCOGS_KEY+DISCOGS_SECRET")
+                print("  Get credentials at https://www.discogs.com/settings/developers")
+        else:
+            print("Discogs lookup: disabled (module not found)")
+        print(f"QR generation:  {'enabled' if QR_ENABLED else 'disabled (install qrcode)'}")
         print("Ctrl+C to stop")
         httpd.serve_forever()
 

@@ -26,6 +26,7 @@ dependencies = [
     "pyloudnorm>=0.1.1",
     "omegaconf>=2.3.0",
     "torchcodec>=0.9.1",
+    "qrcode>=8.0",
 ]
 
 [project.optional-dependencies]
