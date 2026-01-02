@@ -30,50 +30,21 @@ START_TIME = datetime.now().replace(hour=18, minute=0, second=0, microsecond=0)
 TARGET_SECONDS = 24 * 60 * 60
 
 # Time period definitions
+TIME_PERIODS = {
+    (0, 6): {"name": "late_night", "mood": "The deepest hours. Insomniacs, night workers, the lonely and the restless.", "energy": "low, contemplative, intimate", "topics": ["insomnia", "memory", "loneliness", "the quality of silence", "why we can't sleep"]},
+    (6, 10): {"name": "early_morning", "mood": "Dawn breaking. Early risers, commuters, those who never slept.", "energy": "gentle, warming, hopeful", "topics": ["beginnings", "coffee rituals", "the promise of a new day", "morning light"]},
+    (10, 14): {"name": "morning", "mood": "Day fully arrived. Work mode, focused energy.", "energy": "engaged, curious, productive", "topics": ["work", "creativity", "focus", "the rhythm of doing"]},
+    (14, 18): {"name": "afternoon", "mood": "The long stretch. Afternoon lull, counting hours.", "energy": "steady, sometimes restless", "topics": ["waiting", "time passing", "afternoon light", "the mundane"]},
+    (18, 21): {"name": "evening", "mood": "Day releasing. Transition time, homecoming.", "energy": "unwinding, reflective, social", "topics": ["endings", "coming home", "dinner conversations", "twilight"]},
+    (21, 24): {"name": "night", "mood": "Night claiming the world. The in-between hours.", "energy": "contemplative, intimate, mysterious", "topics": ["night thoughts", "what the dark reveals", "solitude", "the radio as companion"]},
+}
+
 def get_time_period(hour: int) -> dict:
     """Get mood/context for a given hour."""
-    if 0 <= hour < 6:
-        return {
-            "name": "late_night",
-            "mood": "The deepest hours. Insomniacs, night workers, the lonely and the restless.",
-            "energy": "low, contemplative, intimate",
-            "topics": ["insomnia", "memory", "loneliness", "the quality of silence", "why we can't sleep"],
-        }
-    elif 6 <= hour < 10:
-        return {
-            "name": "early_morning",
-            "mood": "Dawn breaking. Early risers, commuters, those who never slept.",
-            "energy": "gentle, warming, hopeful",
-            "topics": ["beginnings", "coffee rituals", "the promise of a new day", "morning light"],
-        }
-    elif 10 <= hour < 14:
-        return {
-            "name": "morning",
-            "mood": "Day fully arrived. Work mode, focused energy.",
-            "energy": "engaged, curious, productive",
-            "topics": ["work", "creativity", "focus", "the rhythm of doing"],
-        }
-    elif 14 <= hour < 18:
-        return {
-            "name": "afternoon",
-            "mood": "The long stretch. Afternoon lull, counting hours.",
-            "energy": "steady, sometimes restless",
-            "topics": ["waiting", "time passing", "afternoon light", "the mundane"],
-        }
-    elif 18 <= hour < 21:
-        return {
-            "name": "evening",
-            "mood": "Day releasing. Transition time, homecoming.",
-            "energy": "unwinding, reflective, social",
-            "topics": ["endings", "coming home", "dinner conversations", "twilight"],
-        }
-    else:  # 21-24
-        return {
-            "name": "night",
-            "mood": "Night claiming the world. The in-between hours.",
-            "energy": "contemplative, intimate, mysterious",
-            "topics": ["night thoughts", "what the dark reveals", "solitude", "the radio as companion"],
-        }
+    for (start, end), period in TIME_PERIODS.items():
+        if start <= hour < end:
+            return period
+    return TIME_PERIODS[(21, 24)]  # fallback to night
 
 # Segment types with duration ranges (seconds) and weights by time period
 SEGMENT_TYPES = {
@@ -212,9 +183,20 @@ def generate_segment(seg_type: str, broadcast_time: datetime) -> tuple[Path, flo
         time_period=period["name"],
     )
 
+    # Build time-specific context for the Operator
+    time_context = f"""
+CRITICAL TIME CONTEXT:
+This segment will broadcast at EXACTLY {time_str} ({period['name']} hours).
+The listener is hearing this AT {time_str} - reference this specific time naturally.
+DO NOT use generic phrases like "tonight" or "this hour" - be specific about {time_str}.
+If it's an hour marker, announce that it IS {time_str} right now.
+The content MUST feel appropriate for someone listening at {time_str}."""
+
     full_prompt = f"""{OPERATOR_IDENTITY.strip()}
 
 {OPERATOR_VOICE.strip()}
+
+{time_context}
 
 {prompt}
 

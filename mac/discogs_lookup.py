@@ -11,6 +11,7 @@ The Discogs search API requires authentication. You need to:
 2. Go to https://www.discogs.com/settings/developers
 3. Generate a personal access token
 4. Set the DISCOGS_TOKEN environment variable
+   or store the token in ~/.wvoid/discogs_token
 
 Alternatively, create a Discogs Application to get a key/secret pair:
 - Set DISCOGS_KEY and DISCOGS_SECRET environment variables
@@ -36,7 +37,18 @@ CACHE_FILE = Path.home() / ".wvoid" / "discogs_cache.json"
 REQUEST_DELAY = 2.5  # Seconds between requests (conservative)
 
 # Discogs API credentials - REQUIRED for search endpoint
-DISCOGS_TOKEN = os.environ.get("DISCOGS_TOKEN")
+DISCOGS_TOKEN_PATH = Path.home() / ".wvoid" / "discogs_token"
+
+
+def _load_discogs_token() -> Optional[str]:
+    """Load a Discogs token from ~/.wvoid/discogs_token."""
+    try:
+        return DISCOGS_TOKEN_PATH.read_text().strip() or None
+    except OSError:
+        return None
+
+
+DISCOGS_TOKEN = os.environ.get("DISCOGS_TOKEN") or _load_discogs_token()
 DISCOGS_KEY = os.environ.get("DISCOGS_KEY")
 DISCOGS_SECRET = os.environ.get("DISCOGS_SECRET")
 DISCOGS_USER_AGENT = "WVOID-FM/1.0 +https://radio.khaledeltokhy.com"
@@ -90,33 +102,13 @@ def _save_cache() -> None:
 
 
 def _clean_track_name(name: str) -> tuple[str, str]:
-    """Extract artist and title from track name.
-
-    Common patterns:
-    - "Artist - Title"
-    - "01 - Title" (just track number)
-    - "Title (Artist)"
-    - "Title"
-
-    Returns (artist, title) tuple. Artist may be empty.
-    """
-    name = name.strip()
-
-    # Remove track numbers like "01 - ", "1. ", etc.
-    name = re.sub(r"^\d+[\s\-\.]+", "", name)
-
-    # Try "Artist - Title" pattern
+    """Extract (artist, title) from track name."""
+    name = re.sub(r"^\d+[\s\-\.]+", "", name.strip())  # Remove track numbers
     if " - " in name:
-        parts = name.split(" - ", 1)
-        if len(parts) == 2:
-            return parts[0].strip(), parts[1].strip()
-
-    # Try "Title (Artist)" pattern
-    match = re.match(r"(.+?)\s*\(([^)]+)\)\s*$", name)
-    if match:
+        artist, title = name.split(" - ", 1)
+        return artist.strip(), title.strip()
+    if match := re.match(r"(.+?)\s*\(([^)]+)\)\s*$", name):
         return match.group(2).strip(), match.group(1).strip()
-
-    # Just the title
     return "", name
 
 
@@ -287,10 +279,7 @@ def search_discogs(track_name: str, vibe: str = None) -> Optional[DiscogsResult]
 
 
 def get_discogs_url(track_name: str, vibe: str = None) -> Optional[str]:
-    """Get Discogs URL for a track.
-
-    Convenience wrapper around search_discogs.
-    """
+    """Get Discogs URL for a track."""
     result = search_discogs(track_name, vibe)
     return result.url if result else None
 

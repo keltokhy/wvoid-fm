@@ -430,11 +430,9 @@ def update_now_playing(track: str, track_type: str, vibe: str = None, time_perio
 def check_command() -> str | None:
     """Check for pending command."""
     try:
-        if COMMAND_FILE.exists():
-            cmd = COMMAND_FILE.read_text().strip()
-            if cmd:
-                COMMAND_FILE.write_text("")
-                return cmd
+        if COMMAND_FILE.exists() and (cmd := COMMAND_FILE.read_text().strip()):
+            COMMAND_FILE.write_text("")
+            return cmd
     except Exception:
         pass
     return None
@@ -497,26 +495,13 @@ def clean_name(filepath: Path, is_segment: bool = False) -> str:
 def classify_track(filepath: Path) -> TrackMood:
     """Classify a track based on its filename/path."""
     name_lower = str(filepath).lower()
-
-    # Check against mood signatures
-    best_match = None
-    best_match_len = 0
-
-    for keyword, mood_data in MOOD_SIGNATURES.items():
-        if keyword in name_lower:
-            # Prefer longer matches (more specific)
-            if len(keyword) > best_match_len:
-                best_match = mood_data
-                best_match_len = len(keyword)
-
-    if best_match:
-        return TrackMood(
-            energy=best_match["energy"],
-            warmth=best_match["warmth"],
-            vibe=best_match["vibe"]
-        )
-
-    # Default: moderate energy and warmth
+    best = max(
+        ((k, v) for k, v in MOOD_SIGNATURES.items() if k in name_lower),
+        key=lambda x: len(x[0]),
+        default=(None, None)
+    )[1]
+    if best:
+        return TrackMood(energy=best["energy"], warmth=best["warmth"], vibe=best["vibe"])
     return TrackMood(energy=0.5, warmth=0.5, vibe="unknown")
 
 
@@ -620,9 +605,6 @@ SEGMENT_TYPES = [
     "weather", "news", "poetry"
 ]
 
-LONG_SEGMENT_TYPES = {"long_talk", "monologue", "late_night", "music_history", "news"}
-SHORT_SEGMENT_TYPES = {"station_id", "hour_marker", "dedication"}
-
 
 def get_segment_type(seg: Path) -> str:
     """Extract segment type from filename."""
@@ -633,82 +615,53 @@ def get_segment_type(seg: Path) -> str:
     return "other"
 
 
-def parse_segment_time(seg: Path) -> int | None:
-    """Extract target hour from segment filename (e.g., hour_marker_20251231_1800_xxx.wav -> 18)."""
-    # Pattern: *_YYYYMMDD_HHMM_*.wav
-    name = seg.stem
-    parts = name.split("_")
-    for part in parts:
-        if len(part) == 4 and part.isdigit():
-            hour = int(part[:2])
-            if 0 <= hour <= 23:
-                return hour
-    return None
+def get_current_period() -> str:
+    """Get the current time period name."""
+    hour = datetime.now().hour
+    if hour < 6: return "late_night"
+    if hour < 12: return "morning"
+    if hour < 18: return "afternoon"
+    return "evening"
 
 
-def select_segment_for_time(segments: list[Path]) -> Path:
-    """Select a segment appropriate for the current time."""
+def select_segment(base_dir: Path) -> Path | None:
+    """Select a segment from the current period's folder.
+
+    Falls back to any segment if period folder is empty.
+    Prioritizes listener dedications.
+    """
     global last_segment_type
-    profile = get_current_time_profile()
-    current_hour = datetime.now().hour
+    period = get_current_period()
+    period_dir = base_dir / period
 
-    # PRIORITY 1: Always play listener dedications first (newest first)
-    listener_dedications = sorted(
+    # Get segments from period folder, or fall back to base
+    if period_dir.exists():
+        segments = list(period_dir.glob("*.wav"))
+    else:
+        segments = []
+
+    # Fall back to base directory if period folder empty
+    if not segments:
+        segments = list(base_dir.glob("*.wav"))
+
+    if not segments:
+        return None
+
+    # Prioritize listener dedications (newest first)
+    dedications = sorted(
         [s for s in segments if "listener_dedication" in s.name.lower()],
         key=lambda x: x.stat().st_mtime,
         reverse=True
     )
-    if listener_dedications and last_segment_type != "listener_dedication":
-        selected = listener_dedications[0]
+    if dedications and last_segment_type != "listener_dedication":
+        selected = dedications[0]
         last_segment_type = "listener_dedication"
         return selected
 
-    # PRIORITY 2: Prefer time-tagged segments for current hour (+/- 1 hour window)
-    time_matched = []
-    for seg in segments:
-        seg_hour = parse_segment_time(seg)
-        if seg_hour is not None:
-            # Match current hour or adjacent hours
-            hour_diff = min(abs(seg_hour - current_hour), 24 - abs(seg_hour - current_hour))
-            if hour_diff <= 1:
-                time_matched.append(seg)
-
-    # Filter out recently played type
-    if time_matched:
-        available = [s for s in time_matched if get_segment_type(s) != last_segment_type]
-        if available:
-            selected = random.choice(available)
-            last_segment_type = get_segment_type(selected)
-            log(f"   (time-matched for {current_hour:02d}:00)")
-            return selected
-
-    # FALLBACK: Original selection logic for non-time-tagged segments
+    # Pick randomly, avoiding same type twice in a row
     available = [s for s in segments if get_segment_type(s) != last_segment_type]
     if not available:
         available = segments
-
-    # Prefer longer segments more often, with a bias by time period.
-    long_segs = [s for s in available if get_segment_type(s) in LONG_SEGMENT_TYPES]
-    short_segs = [s for s in available if get_segment_type(s) in SHORT_SEGMENT_TYPES]
-    long_bias = {
-        "late_night": 0.85,
-        "night": 0.8,
-        "early_afternoon": 0.8,
-        "evening": 0.7,
-        "afternoon": 0.65,
-        "morning": 0.6,
-        "early_morning": 0.6,
-    }.get(profile["name"], 0.6)
-
-    if long_segs and (not short_segs or random.random() < long_bias):
-        selected = random.choice(long_segs)
-        last_segment_type = get_segment_type(selected)
-        return selected
-
-    if short_segs:
-        selected = random.choice(short_segs)
-        last_segment_type = get_segment_type(selected)
-        return selected
 
     selected = random.choice(available)
     last_segment_type = get_segment_type(selected)
@@ -716,42 +669,17 @@ def select_segment_for_time(segments: list[Path]) -> Path:
 
 
 def should_play_segment(time_period: str) -> bool:
-    """Decide whether to play a segment based on time and recent history."""
-    global tracks_since_segment
-
-    # Always play if forced
-    if force_segment:
-        return True
-
-    # Get spacing for current time period
-    min_tracks, max_tracks = get_segment_spacing()
-
-    # Always skip if played too recently
-    if tracks_since_segment < min_tracks:
-        return False
-
-    # Always play if it's been too long
-    if tracks_since_segment >= max_tracks:
-        return True
-
-    # Otherwise, use probability based on time of day
-    prob = SEGMENT_PROBABILITY.get(time_period, 0.4)
-    return random.random() < prob
+    """Play a segment after every song (1 song, 1 talk pattern)."""
+    return force_segment or tracks_since_segment >= 1
 
 
 def get_track_duration(filepath: Path) -> float | None:
     """Get track duration in seconds using ffprobe."""
     try:
         result = subprocess.run(
-            [
-                "ffprobe", "-v", "error",
-                "-show_entries", "format=duration",
-                "-of", "default=noprint_wrappers=1:nokey=1",
-                str(filepath)
-            ],
-            capture_output=True,
-            text=True,
-            timeout=10
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(filepath)],
+            capture_output=True, text=True, timeout=10
         )
         if result.returncode == 0 and result.stdout.strip():
             return float(result.stdout.strip())
@@ -760,44 +688,14 @@ def get_track_duration(filepath: Path) -> float | None:
     return None
 
 
-# =============================================================================
-# PLAYBACK CONSTANTS
-# =============================================================================
-
 # Track chopping (for long albums/mixes)
 MAX_TRACK_DURATION = 150  # 2.5 minutes - chop longer tracks
 CHUNK_MIN_DURATION = 90   # 1.5 minutes minimum chunk
 CHUNK_MAX_DURATION = 150  # 2.5 minutes maximum chunk
 
-# Segment probability by time period (higher = more talk segments)
-SEGMENT_PROBABILITY = {
-    "late_night": 0.8,
-    "night": 0.7,
-    "evening": 0.6,
-    "afternoon": 0.6,
-    "early_afternoon": 0.9,  # Talk heavy hour (2-3pm)
-    "morning": 0.55,
-    "early_morning": 0.6,
-}
-
-# Segment spacing (min, max tracks between segments)
-SEGMENT_SPACING = {
-    "early_afternoon": (1, 2),  # Talk heavy
-    "late_night": (2, 4),
-    "evening": (2, 4),
-    "morning": (3, 4),
-    "default": (3, 5),
-}
-
 # Runtime state
 last_segment_type = None
 tracks_since_segment = 0
-
-
-def get_segment_spacing() -> tuple[int, int]:
-    """Get min/max tracks between segments for current time."""
-    profile = get_current_time_profile()
-    return SEGMENT_SPACING.get(profile["name"], SEGMENT_SPACING["default"])
 
 
 # =============================================================================
@@ -809,46 +707,29 @@ def get_all_podcasts() -> list[Path]:
     """Get all podcast files from the podcasts directory."""
     if not PODCASTS_DIR.exists():
         return []
-    extensions = ("*.mp3", "*.flac", "*.m4a", "*.wav", "*.ogg", "*.aac")
-    podcasts = []
-    for ext in extensions:
-        podcasts.extend(PODCASTS_DIR.glob(ext))
+    exts = {".mp3", ".flac", ".m4a", ".wav", ".ogg", ".aac"}
+    podcasts = [f for f in PODCASTS_DIR.iterdir() if f.suffix.lower() in exts]
     return sorted(podcasts, key=lambda p: p.stat().st_mtime, reverse=True)
 
 
 def should_play_podcast() -> bool:
-    """Check if it's time to play a podcast (every 3 hours at 0, 3, 6, 9, 12, 15, 18, 21)."""
-    global last_podcast_hour
+    """Check if it's time to play a podcast (every 3 hours)."""
     current_hour = datetime.now().hour
-
-    # Only trigger at podcast hours
-    if current_hour not in PODCAST_HOURS:
-        return False
-
-    # Don't repeat in the same hour
-    if last_podcast_hour == current_hour:
-        return False
-
-    return True
+    return current_hour in PODCAST_HOURS and last_podcast_hour != current_hour
 
 
 def select_podcast(podcasts: list[Path]) -> Path | None:
-    """Select a podcast to play. Prefers unplayed ones, avoids recent repeats."""
+    """Select a podcast, preferring unplayed ones."""
     if not podcasts:
         return None
-
-    # If we have play history, prefer podcasts not played recently
     if HISTORY_ENABLED:
         try:
             history = get_history()
-            # Filter out podcasts played in last 24 hours
             unplayed = [p for p in podcasts if not history.was_played_recently(str(p), hours=24)]
             if unplayed:
                 return random.choice(unplayed)
         except Exception:
             pass
-
-    # Fallback: random from most recent 5
     return random.choice(podcasts[:5]) if len(podcasts) > 5 else random.choice(podcasts)
 
 
@@ -1002,9 +883,14 @@ def run():
     log(f"Streaming to: {ICECAST_URL}")
 
     all_music = get_all_music()
-    all_segments = get_audio_files(SEGMENTS_DIR)
     all_podcasts = get_all_podcasts()
-    log(f"Total library: {len(all_music)} tracks, {len(all_segments)} segments, {len(all_podcasts)} podcasts")
+
+    # Count segments across period folders
+    segment_count = sum(len(list((SEGMENTS_DIR / p).glob("*.wav")))
+                       for p in ["late_night", "morning", "afternoon", "evening"]
+                       if (SEGMENTS_DIR / p).exists())
+    segment_count += len(list(SEGMENTS_DIR.glob("*.wav")))  # Plus any in root
+    log(f"Total library: {len(all_music)} tracks, {segment_count} segments, {len(all_podcasts)} podcasts")
 
     queue_size = 15  # Curate 15 tracks at a time
     tracks_since_reshuffle = 0
@@ -1067,10 +953,11 @@ def run():
                             log("Podcast pipe failed, continuing...")
 
                 # Handle forced segment
-                if force_segment and all_segments:
-                    seg = select_segment_for_time(all_segments)
-                    log(f"🎙 [FORCED] {clean_name(seg, is_segment=True)}")
-                    pipe_track(seg, encoder_proc, is_speech=True)
+                if force_segment:
+                    seg = select_segment(SEGMENTS_DIR)
+                    if seg:
+                        log(f"🎙 [FORCED] {clean_name(seg, is_segment=True)}")
+                        pipe_track(seg, encoder_proc, is_speech=True)
                     force_segment = False
 
                 # Play track (chop if too long)
@@ -1117,25 +1004,25 @@ def run():
                 tracks_since_segment += 1
 
                 # Decide whether to play a segment
-                if all_segments and should_play_segment(current_profile["name"]):
-                    seg = select_segment_for_time(all_segments)
-                    seg_name = clean_name(seg, is_segment=True)
-                    is_listener_dedication = "listener_dedication" in seg.name.lower()
-                    log(f"🎙 {seg_name}")
-                    update_now_playing(seg_name, "segment", None, current_profile["name"])
-                    if not pipe_track(seg, encoder_proc, is_speech=True):
-                        log("Segment pipe failed, reconnecting...")
-                        break
-                    # Delete listener dedications after playing (one-time use)
-                    if is_listener_dedication:
-                        try:
-                            seg.unlink()
-                            all_segments = [s for s in all_segments if s != seg]
-                            log(f"   (dedication played and removed)")
-                        except Exception as e:
-                            log(f"   (failed to remove dedication: {e})")
-                    tracks_since_segment = 0
-                    force_segment = False  # Clear force flag if set
+                if should_play_segment(current_profile["name"]):
+                    seg = select_segment(SEGMENTS_DIR)
+                    if seg:
+                        seg_name = clean_name(seg, is_segment=True)
+                        is_listener_dedication = "listener_dedication" in seg.name.lower()
+                        log(f"🎙 {seg_name}")
+                        update_now_playing(seg_name, "segment", None, current_profile["name"])
+                        if not pipe_track(seg, encoder_proc, is_speech=True):
+                            log("Segment pipe failed, reconnecting...")
+                            break
+                        # Delete listener dedications after playing (one-time use)
+                        if is_listener_dedication:
+                            try:
+                                seg.unlink()
+                                log(f"   (dedication played and removed)")
+                            except Exception as e:
+                                log(f"   (failed to remove dedication: {e})")
+                        tracks_since_segment = 0
+                        force_segment = False
 
             if running and encoder_proc.poll() is None:
                 log("Queue complete, refreshing for current time period...")

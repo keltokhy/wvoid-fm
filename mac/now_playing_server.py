@@ -12,6 +12,7 @@ import os
 import socketserver
 import subprocess
 import time
+import urllib.parse
 import urllib.request
 from datetime import datetime
 from pathlib import Path
@@ -66,72 +67,36 @@ LAST_TRACK = None
 
 
 class NowPlayingHandler(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == "/now-playing" or self.path == "/now-playing/" or self.path == "/":
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
-            self.end_headers()
+    def _send_json(self, data, cache_control=None):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        if cache_control:
+            self.send_header("Cache-Control", cache_control)
+        self.end_headers()
+        try:
+            self.wfile.write(json.dumps(data).encode())
+        except BrokenPipeError:
+            pass
 
+    def do_GET(self):
+        path = urllib.parse.urlparse(self.path).path.rstrip("/") or "/"
+
+        if path in ("/now-playing", "/"):
             data = get_now_playing()
             track_stats_update(data)
-            payload = json.dumps(data).encode()
-            try:
-                self.wfile.write(payload)
-            except BrokenPipeError:
-                pass
-        elif self.path == "/health" or self.path == "/health/":
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.end_headers()
-            health = get_health_status()
-            try:
-                self.wfile.write(json.dumps(health).encode())
-            except BrokenPipeError:
-                pass
-        elif self.path == "/stats" or self.path == "/stats/":
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.end_headers()
-            stats = get_stats()
-            try:
-                self.wfile.write(json.dumps(stats).encode())
-            except BrokenPipeError:
-                pass
-        elif self.path.startswith("/history"):
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.end_headers()
-            history_data = get_play_history()
-            try:
-                self.wfile.write(json.dumps(history_data).encode())
-            except BrokenPipeError:
-                pass
-        elif self.path == "/messages" or self.path == "/messages/":
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.end_headers()
-            messages = get_messages()
-            try:
-                self.wfile.write(json.dumps(messages).encode())
-            except BrokenPipeError:
-                pass
-        elif self.path == "/discogs" or self.path == "/discogs/":
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.end_headers()
-            discogs_data = get_discogs_info()
-            try:
-                self.wfile.write(json.dumps(discogs_data).encode())
-            except BrokenPipeError:
-                pass
-        elif self.path == "/qr" or self.path == "/qr/":
+            self._send_json(data, "no-cache, no-store, must-revalidate")
+        elif path == "/health":
+            self._send_json(get_health_status())
+        elif path == "/stats":
+            self._send_json(get_stats())
+        elif path.startswith("/history"):
+            self._send_json(get_play_history())
+        elif path == "/messages":
+            self._send_json(get_messages())
+        elif path == "/discogs":
+            self._send_json(get_discogs_info())
+        elif path == "/qr":
             qr_bytes = get_qr_code()
             if qr_bytes:
                 self.send_response(200)
@@ -156,57 +121,38 @@ class NowPlayingHandler(http.server.BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
 
+    def _send_error(self, code, msg):
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(json.dumps({"error": msg}).encode())
+
     def do_POST(self):
-        if self.path == "/message" or self.path == "/message/":
-            # Rate limit check
-            client_ip = self.client_address[0]
-            now = time.time()
-
-            if client_ip in last_message_times:
-                elapsed = now - last_message_times[client_ip]
-                if elapsed < MESSAGE_COOLDOWN:
-                    self.send_response(429)  # Too Many Requests
-                    self.send_header("Content-Type", "application/json")
-                    self.send_header("Access-Control-Allow-Origin", "*")
-                    self.end_headers()
-                    wait_time = int(MESSAGE_COOLDOWN - elapsed)
-                    self.wfile.write(json.dumps({"error": f"Please wait {wait_time}s"}).encode())
-                    return
-
-            # Read and validate message
-            try:
-                content_length = int(self.headers.get('Content-Length', 0))
-                body = self.rfile.read(content_length).decode('utf-8')
-                data = json.loads(body)
-                message = data.get('message', '').strip()
-
-                if not message or len(message) > 280:
-                    self.send_response(400)
-                    self.send_header("Content-Type", "application/json")
-                    self.send_header("Access-Control-Allow-Origin", "*")
-                    self.end_headers()
-                    self.wfile.write(json.dumps({"error": "Invalid message"}).encode())
-                    return
-
-                # Save message
-                save_message(message, client_ip)
-                last_message_times[client_ip] = now
-
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.end_headers()
-                self.wfile.write(json.dumps({"status": "received"}).encode())
-
-            except Exception as e:
-                self.send_response(500)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.end_headers()
-                self.wfile.write(json.dumps({"error": str(e)}).encode())
-        else:
+        path = urllib.parse.urlparse(self.path).path.rstrip("/")
+        if path != "/message":
             self.send_response(404)
             self.end_headers()
+            return
+
+        client_ip = self.client_address[0]
+        now = time.time()
+        if client_ip in last_message_times and now - last_message_times[client_ip] < MESSAGE_COOLDOWN:
+            wait_time = int(MESSAGE_COOLDOWN - (now - last_message_times[client_ip]))
+            return self._send_error(429, f"Please wait {wait_time}s")
+
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            data = json.loads(self.rfile.read(content_length).decode('utf-8'))
+            message = data.get('message', '').strip()
+            if not message or len(message) > 280:
+                return self._send_error(400, "Invalid message")
+
+            save_message(message, client_ip)
+            last_message_times[client_ip] = now
+            self._send_json({"status": "received"})
+        except Exception as e:
+            self._send_error(500, str(e))
 
     def do_OPTIONS(self):
         self.send_response(200)
@@ -234,12 +180,7 @@ def get_listeners() -> int:
 def check_process(name: str) -> bool:
     """Check if process is running."""
     try:
-        result = subprocess.run(
-            ["pgrep", "-f", name],
-            capture_output=True,
-            timeout=5,
-        )
-        return result.returncode == 0
+        return subprocess.run(["pgrep", "-f", name], capture_output=True, timeout=5).returncode == 0
     except:
         return False
 
@@ -247,8 +188,7 @@ def check_process(name: str) -> bool:
 def check_url(url: str, timeout: int = 2) -> bool:
     """Check if URL responds."""
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as response:
-            return response.status == 200
+        return urllib.request.urlopen(url, timeout=timeout).status == 200
     except:
         return False
 
@@ -258,18 +198,14 @@ def get_health_status() -> dict:
     icecast_ok = check_url(ICECAST_STATUS_URL)
     streamer_ok = check_process("stream_gapless")
     tunnel_ok = check_process("cloudflared")
-    api_ok = True  # We're responding, so API is up
-
-    all_ok = icecast_ok and streamer_ok and tunnel_ok
-
     return {
-        "status": "healthy" if all_ok else "degraded",
+        "status": "healthy" if icecast_ok and streamer_ok and tunnel_ok else "degraded",
         "timestamp": datetime.now().isoformat(),
         "components": {
             "icecast": {"status": "up" if icecast_ok else "down"},
             "streamer": {"status": "up" if streamer_ok else "down"},
             "tunnel": {"status": "up" if tunnel_ok else "down"},
-            "api": {"status": "up" if api_ok else "down"},
+            "api": {"status": "up"},  # We're responding
         },
         "uptime_seconds": int(time.time() - SERVER_START_TIME),
     }
@@ -370,19 +306,18 @@ def get_messages(limit: int = 20) -> list[dict]:
 
 def get_now_playing() -> dict:
     """Read current track info from JSON file."""
-    data = {"track": None, "type": None, "listeners": 0}
-
     try:
-        if NOW_PLAYING_FILE.exists():
-            with open(NOW_PLAYING_FILE, "r") as f:
-                data = json.load(f)
+        data = json.loads(NOW_PLAYING_FILE.read_text()) if NOW_PLAYING_FILE.exists() else {}
     except:
-        pass
-
-    # Add listener count
+        data = {}
     data["listeners"] = get_listeners()
-
     return data
+
+
+def _qr_data_url_for(discogs_data: dict | None) -> str | None:
+    if not QR_ENABLED or not discogs_data or not discogs_data.get("url"):
+        return None
+    return generate_qr_data_url(discogs_data["url"])
 
 
 def get_discogs_info() -> dict:
@@ -418,7 +353,12 @@ def get_discogs_info() -> dict:
         cached = _discogs_cache[track_name]
         if cached is None:
             return {"enabled": True, "track": track_name, "discogs": None, "reason": "Not found on Discogs"}
-        return {"enabled": True, "track": track_name, "discogs": cached}
+        return {
+            "enabled": True,
+            "track": track_name,
+            "discogs": cached,
+            "qr_data_url": _qr_data_url_for(cached),
+        }
 
     # Perform lookup (only if track changed)
     if track_name != _discogs_last_track:
@@ -437,7 +377,12 @@ def get_discogs_info() -> dict:
                 "format": result.format,
             }
             _discogs_cache[track_name] = discogs_data
-            return {"enabled": True, "track": track_name, "discogs": discogs_data}
+            return {
+                "enabled": True,
+                "track": track_name,
+                "discogs": discogs_data,
+                "qr_data_url": _qr_data_url_for(discogs_data),
+            }
         else:
             _discogs_cache[track_name] = None
             return {"enabled": True, "track": track_name, "discogs": None, "reason": "Not found on Discogs"}
@@ -447,30 +392,32 @@ def get_discogs_info() -> dict:
         cached = _discogs_cache[track_name]
         if cached is None:
             return {"enabled": True, "track": track_name, "discogs": None, "reason": "Not found on Discogs"}
-        return {"enabled": True, "track": track_name, "discogs": cached}
+        return {
+            "enabled": True,
+            "track": track_name,
+            "discogs": cached,
+            "qr_data_url": _qr_data_url_for(cached),
+        }
 
     return {"enabled": True, "track": track_name, "discogs": None, "reason": "Lookup pending"}
 
 
 def get_qr_code() -> bytes | None:
-    """Get QR code PNG for the current track's Discogs page.
-
-    Returns PNG bytes or None if no Discogs info available.
-    """
+    """Get QR code PNG for the current track's Discogs page."""
     if not QR_ENABLED:
         return None
-
-    discogs_info = get_discogs_info()
-    discogs_data = discogs_info.get("discogs")
-
+    discogs_data = get_discogs_info().get("discogs")
     if not discogs_data or not discogs_data.get("url"):
         return None
-
     return generate_qr_png(discogs_data["url"])
 
 
+class ReusableTCPServer(socketserver.TCPServer):
+    allow_reuse_address = True
+
+
 def run():
-    with socketserver.TCPServer(("", PORT), NowPlayingHandler) as httpd:
+    with ReusableTCPServer(("", PORT), NowPlayingHandler) as httpd:
         print(f"Now Playing API running on http://localhost:{PORT}/now-playing")
         print(f"  /discogs  - Current track's Discogs info")
         print(f"  /qr       - QR code for Discogs page (PNG)")
