@@ -1,0 +1,265 @@
+timezone: local
+
+# When to play long-form podcasts (top-of-hour). Streamer will play once per slot.
+podcasts:
+  hours: [0, 3, 6, 9, 12, 15, 18, 21]
+
+# Show definitions: music profile + talk frequency + optional voice choices for assets.
+shows:
+  overnight_drift:
+    name: "Liminal Overnight"
+    description: "Ambient, jazz, and slow transmissions for insomniacs."
+    segment_after_tracks: 2
+    podcasts_enabled: true
+    music:
+      energy_range: [0.0, 0.4]
+      prefer_warmth: 0.7
+      vibes: ["ambient", "jazz", "downtempo", "classical", "soul_slow", "dub"]
+    voices:
+      host: "am_michael"
+      promo: "bf_emma"
+
+  sunrise_drift:
+    name: "Sunrise Drift"
+    description: "Warm coffee sounds: gentle wake-up grooves and soft light."
+    segment_after_tracks: 2
+    podcasts_enabled: true
+    music:
+      energy_range: [0.2, 0.5]
+      prefer_warmth: 0.6
+      vibes: ["jazz", "classical", "bossa", "folk", "ambient", "soul_slow"]
+    voices:
+      host: "am_michael"
+      promo: "af_heart"
+
+  midday_mosaic:
+    name: "Midday Mosaic"
+    description: "Groove-forward curation for the moving parts of the day."
+    segment_after_tracks: 3
+    podcasts_enabled: true
+    music:
+      energy_range: [0.4, 0.7]
+      prefer_warmth: 0.5
+      vibes: ["soul", "funk", "indie", "world", "jazz", "hiphop_chill"]
+    voices:
+      host: "am_michael"
+      promo: "bm_daniel"
+
+  talk_hour:
+    name: "The Talk Hour"
+    description: "More voice, fewer songs: signals, stories, and static."
+    segment_after_tracks: 1
+    podcasts_enabled: true
+    music:
+      energy_range: [0.35, 0.6]
+      prefer_warmth: 0.55
+      vibes: ["jazz", "soul", "indie", "world", "downtempo"]
+    voices:
+      host: "am_michael"
+      promo: "bf_emma"
+
+  peak_signal:
+    name: "Peak Signal"
+    description: "High-energy afternoons: momentum, motion, and bright edges."
+    segment_after_tracks: 3
+    podcasts_enabled: true
+    music:
+      energy_range: [0.5, 0.85]
+      prefer_warmth: 0.4
+      vibes: ["funk", "disco", "hiphop", "indie", "electronic", "world", "rock"]
+    voices:
+      host: "am_michael"
+      promo: "af_bella"
+
+  golden_hour:
+    name: "Golden Hour"
+    description: "Sunset warmth: soul, disco, and the slow descent into night."
+    segment_after_tracks: 2
+    podcasts_enabled: true
+    music:
+      energy_range: [0.4, 0.7]
+      prefer_warmth: 0.65
+      vibes: ["soul", "disco", "funk", "indie", "world"]
+    voices:
+      host: "am_michael"
+      promo: "bf_emma"
+
+  night_transmission:
+    name: "Night Transmission"
+    description: "Downtempo hours: contemplative music and dimly lit airwaves."
+    segment_after_tracks: 2
+    podcasts_enabled: true
+    music:
+      energy_range: [0.2, 0.55]
+      prefer_warmth: 0.7
+      vibes: ["downtempo", "jazz", "soul_slow", "electronic_chill", "dub", "ambient"]
+    voices:
+      host: "am_michael"
+      promo: "bm_daniel"
+
+  jazz_archives:
+    name: "Sonic Archaeology: Jazz Archives"
+    description: "Deep cuts, lost sessions, and warm tape hiss."
+    segment_after_tracks: 2
+    podcasts_enabled: true
+    music:
+      energy_range: [0.25, 0.6]
+      prefer_warmth: 0.9
+      vibes: ["jazz", "classical", "ambient", "world"]
+    voices:
+      host: "bm_daniel"
+      promo: "bf_emma"
+
+  world_circuit:
+    name: "World Circuit"
+    description: "Global grooves and late-evening travel without leaving the room."
+    segment_after_tracks: 2
+    podcasts_enabled: true
+    music:
+      energy_range: [0.35, 0.7]
+      prefer_warmth: 0.9
+      vibes: ["world", "jazz", "soul", "funk", "ambient"]
+    voices:
+      host: "am_michael"
+      promo: "af_heart"
+
+  electric_drift:
+    name: "Electric Drift"
+    description: "Neon calm: electronic currents, soft sub-bass, and late glow."
+    segment_after_tracks: 3
+    podcasts_enabled: true
+    music:
+      energy_range: [0.4, 0.8]
+      prefer_warmth: 0.35
+      vibes: ["electronic_chill", "electronic", "downtempo", "ambient"]
+    voices:
+      host: "am_onyx"
+      promo: "bf_emma"
+
+  memory_lane:
+    name: "Memory Lane: Rock & Indie"
+    description: "Guitars as time machines: anthems, B-sides, and late-night recall."
+    segment_after_tracks: 2
+    podcasts_enabled: true
+    music:
+      energy_range: [0.35, 0.75]
+      prefer_warmth: 0.55
+      vibes: ["indie", "rock", "downtempo", "ambient"]
+    voices:
+      host: "bm_daniel"
+      promo: "af_bella"
+
+  club_liminal:
+    name: "Club Liminal"
+    description: "After-hours dance transmission. Keep moving; keep listening."
+    segment_after_tracks: 4
+    podcasts_enabled: false
+    music:
+      energy_range: [0.6, 0.95]
+      prefer_warmth: 0.3
+      vibes: ["electronic", "disco", "hiphop"]
+    voices:
+      host: "am_fenrir"
+      promo: "af_nova"
+
+  saturday_soul_service:
+    name: "Saturday Soul Service"
+    description: "A weekly reset: soul, funk, and the kind of joy you can hear."
+    segment_after_tracks: 2
+    podcasts_enabled: true
+    music:
+      energy_range: [0.45, 0.85]
+      prefer_warmth: 0.9
+      vibes: ["soul", "funk", "disco", "jazz"]
+    voices:
+      host: "am_michael"
+      promo: "af_heart"
+
+  slow_sunday:
+    name: "Slow Sunday"
+    description: "Soft focus: ambient, classical, and gentle songs for a quieter day."
+    segment_after_tracks: 2
+    podcasts_enabled: true
+    music:
+      energy_range: [0.0, 0.55]
+      prefer_warmth: 0.8
+      vibes: ["ambient", "classical", "folk", "jazz", "downtempo"]
+    voices:
+      host: "bf_emma"
+      promo: "bf_emma"
+
+  listener_mailbag:
+    name: "Listener Mailbag"
+    description: "Dedications, messages, and responses from the frequency."
+    segment_after_tracks: 1
+    podcasts_enabled: false
+    music:
+      energy_range: [0.3, 0.65]
+      prefer_warmth: 0.7
+      vibes: ["soul", "jazz", "downtempo", "ambient", "indie"]
+    voices:
+      host: "am_michael"
+      promo: "af_heart"
+
+
+# Weekly schedule.
+# - `base` applies every day.
+# - `overrides` replace the base when day+time match.
+schedule:
+  base:
+    - start: "00:00"
+      end: "06:00"
+      show: "overnight_drift"
+    - start: "06:00"
+      end: "10:00"
+      show: "sunrise_drift"
+    - start: "10:00"
+      end: "14:00"
+      show: "midday_mosaic"
+    - start: "14:00"
+      end: "15:00"
+      show: "talk_hour"
+    - start: "15:00"
+      end: "18:00"
+      show: "peak_signal"
+    - start: "18:00"
+      end: "21:00"
+      show: "golden_hour"
+    - start: "21:00"
+      end: "00:00"
+      show: "night_transmission"
+
+  overrides:
+    - days: ["mon"]
+      start: "20:00"
+      end: "22:00"
+      show: "jazz_archives"
+    - days: ["tue"]
+      start: "20:00"
+      end: "22:00"
+      show: "world_circuit"
+    - days: ["wed"]
+      start: "20:00"
+      end: "22:00"
+      show: "electric_drift"
+    - days: ["thu"]
+      start: "20:00"
+      end: "22:00"
+      show: "memory_lane"
+    - days: ["fri"]
+      start: "22:00"
+      end: "02:00"
+      show: "club_liminal"
+    - days: ["sat"]
+      start: "12:00"
+      end: "14:00"
+      show: "saturday_soul_service"
+    - days: ["sun"]
+      start: "10:00"
+      end: "12:00"
+      show: "slow_sunday"
+    - days: ["sun"]
+      start: "18:00"
+      end: "19:00"
+      show: "listener_mailbag"
+

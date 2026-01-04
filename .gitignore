@@ -11,6 +11,9 @@ mac/chatterbox/.venv/
 output/segments/*.wav
 output/segments/*.aiff
 output/segments/*.mp3
+output/segments/**/*.wav
+output/segments/**/*.aiff
+output/segments/**/*.mp3
 output/scripts/*.json
 output/chopped_music/
 output/music/

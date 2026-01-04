@@ -27,6 +27,12 @@ try:
 except ImportError:
     HISTORY_ENABLED = False
 
+try:
+    from schedule import load_schedule, StationSchedule
+    SCHEDULE_ENABLED = True
+except ImportError:
+    SCHEDULE_ENABLED = False
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 # Directories
@@ -54,6 +60,10 @@ PODCASTS_DIR = Path(os.environ.get("WVOID_PODCASTS_DIR", str(DEFAULT_PODCASTS_DI
 # Plays at 12, 3, 6, 9 - both AM and PM
 PODCAST_HOURS = {0, 3, 6, 9, 12, 15, 18, 21}
 
+# Weekly schedule (optional)
+DEFAULT_SCHEDULE_PATH = PROJECT_ROOT / "config" / "schedule.yaml"
+SCHEDULE_PATH = Path(os.environ.get("WVOID_SCHEDULE_PATH", str(DEFAULT_SCHEDULE_PATH))).expanduser()
+
 # Icecast config (local by default; override via env)
 ICECAST_HOST = os.environ.get("ICECAST_HOST", "localhost")
 ICECAST_PORT = int(os.environ.get("ICECAST_PORT", "8000"))
@@ -75,7 +85,7 @@ encoder_proc = None
 skip_current = False
 force_segment = False
 force_podcast = False  # Play a podcast next
-last_podcast_hour: int | None = None  # Track which hour we last played a podcast
+last_podcast_slot: str | None = None  # Track which slot we last played a podcast (YYYYMMDDHH)
 current_track_info: dict = {
     "track": None,
     "type": None,
@@ -117,6 +127,17 @@ class TrackMood:
     energy: float  # 0.0 (ambient/quiet) to 1.0 (high energy/danceable)
     warmth: float  # 0.0 (cold/electronic) to 1.0 (warm/organic)
     vibe: str      # Category for grouping
+
+
+@dataclass
+class ProgramContext:
+    show_id: str
+    show_name: str
+    show_description: str
+    music_profile: dict
+    segment_after_tracks: int
+    podcasts_enabled: bool
+    podcast_hours: set[int]
 
 # Time periods with their ideal characteristics
 TIME_PROFILES = {
@@ -409,7 +430,14 @@ def write_json_atomic(path: Path, payload: dict) -> None:
     tmp_path.replace(path)
 
 
-def update_now_playing(track: str, track_type: str, vibe: str = None, time_period: str = None):
+def update_now_playing(
+    track: str,
+    track_type: str,
+    vibe: str = None,
+    time_period: str = None,
+    show_id: str | None = None,
+    show_name: str | None = None,
+):
     """Write current track info to JSON file."""
     global current_track_info
     current_track_info = {
@@ -417,6 +445,8 @@ def update_now_playing(track: str, track_type: str, vibe: str = None, time_perio
         "type": track_type,
         "vibe": vibe,
         "time_period": time_period,
+        "show_id": show_id,
+        "show": show_name,
         "timestamp": datetime.now().isoformat(),
         "listeners": get_listener_count(),
     }
@@ -545,9 +575,9 @@ def score_track_for_time(track: Path, profile: dict) -> float:
     return score
 
 
-def create_curated_queue(music: list[Path], size: int = 20) -> list[Path]:
-    """Create a curated queue of tracks appropriate for the current time."""
-    profile = get_current_time_profile()
+def create_curated_queue(music: list[Path], size: int = 20, profile: dict | None = None) -> list[Path]:
+    """Create a curated queue of tracks appropriate for the current program."""
+    profile = profile or get_current_time_profile()
     log(f"Time period: {profile['name']} - {profile['description']}")
 
     # Filter out recently played tracks
@@ -597,6 +627,53 @@ def create_curated_queue(music: list[Path], size: int = 20) -> list[Path]:
                     break
 
     return selected
+
+
+def get_program_context(station_schedule=None) -> ProgramContext:
+    """Resolve the current show/program, falling back to time-of-day profiles."""
+    if station_schedule is not None:
+        resolved = station_schedule.resolve()
+        return ProgramContext(
+            show_id=resolved.show_id,
+            show_name=resolved.name,
+            show_description=resolved.description,
+            music_profile=resolved.music_profile,
+            segment_after_tracks=resolved.segment_after_tracks,
+            podcasts_enabled=resolved.podcasts_enabled,
+            podcast_hours=set(resolved.podcast_hours),
+        )
+
+    profile = get_current_time_profile()
+    return ProgramContext(
+        show_id=profile["name"],
+        show_name=profile["name"],
+        show_description=profile["description"],
+        music_profile=profile,
+        segment_after_tracks=1,
+        podcasts_enabled=True,
+        podcast_hours=set(PODCAST_HOURS),
+    )
+
+
+def select_show_asset(show_id: str, asset_type: str) -> Path | None:
+    """Select the newest show asset WAV (e.g., bumper_in) for a given show_id."""
+    show_dir = SEGMENTS_DIR / "shows" / show_id
+    if not show_dir.exists():
+        return None
+
+    candidates = sorted(
+        show_dir.glob(f"{asset_type}_*.wav"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if candidates:
+        return candidates[0]
+
+    exact = show_dir / f"{asset_type}.wav"
+    if exact.exists():
+        return exact
+
+    return None
 
 
 SEGMENT_TYPES = [
@@ -809,8 +886,25 @@ def start_encoder() -> subprocess.Popen:
             ICECAST_URL
         ],
         stdin=subprocess.PIPE,
-        stderr=subprocess.DEVNULL
+        stderr=subprocess.PIPE  # Capture stderr to diagnose issues
     )
+
+
+def wait_for_encoder_ready(encoder: subprocess.Popen, timeout: float = 2.0) -> bool:
+    """Wait briefly to ensure encoder connected successfully."""
+    import select
+    # Give the encoder a moment to fail if it's going to
+    time.sleep(0.3)
+    if encoder.poll() is not None:
+        # Encoder already died - read stderr for reason
+        try:
+            stderr = encoder.stderr.read().decode() if encoder.stderr else ""
+            if stderr:
+                log(f"Encoder error: {stderr[:200]}")
+        except:
+            pass
+        return False
+    return True
 
 
 def pipe_track(filepath: Path, encoder: subprocess.Popen, start_time: float = 0, duration: float = None, is_speech: bool = False) -> bool:
@@ -840,6 +934,13 @@ def pipe_track(filepath: Path, encoder: subprocess.Popen, start_time: float = 0,
                 encoder.stdin.write(chunk)
                 encoder.stdin.flush()
             except BrokenPipeError:
+                # Try to get error message from encoder
+                try:
+                    stderr = encoder.stderr.read().decode() if encoder.stderr else ""
+                    if stderr:
+                        log(f"Encoder pipe broke: {stderr[:200]}")
+                except:
+                    pass
                 return False
 
             cmd = check_command()
@@ -871,7 +972,7 @@ def pipe_track(filepath: Path, encoder: subprocess.Popen, start_time: float = 0,
 
 
 def run():
-    global running, encoder_proc, force_segment, force_podcast, tracks_since_segment, last_podcast_hour
+    global running, encoder_proc, force_segment, force_podcast, tracks_since_segment, last_podcast_slot
 
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
@@ -881,6 +982,15 @@ def run():
     log(f"Segments: {SEGMENTS_DIR}")
     log(f"Podcasts: {PODCASTS_DIR}")
     log(f"Streaming to: {ICECAST_URL}")
+
+    # Load schedule if available
+    station_schedule = None
+    if SCHEDULE_ENABLED and SCHEDULE_PATH.exists():
+        try:
+            station_schedule = load_schedule(SCHEDULE_PATH)
+            log(f"Loaded schedule with {len(station_schedule.shows)} shows")
+        except Exception as e:
+            log(f"Schedule load failed, using fallback: {e}")
 
     all_music = get_all_music()
     all_podcasts = get_all_podcasts()
@@ -893,38 +1003,51 @@ def run():
     log(f"Total library: {len(all_music)} tracks, {segment_count} segments, {len(all_podcasts)} podcasts")
 
     queue_size = 15  # Curate 15 tracks at a time
-    tracks_since_reshuffle = 0
 
     while running:
         log("Starting encoder...")
         encoder_proc = start_encoder()
 
-        if encoder_proc.poll() is not None:
-            log("Encoder failed to start, retrying in 10s...")
+        if not wait_for_encoder_ready(encoder_proc):
+            log("Encoder failed to connect, retrying in 10s...")
             time.sleep(10)
             continue
 
         log("Encoder connected to Icecast")
 
         while running and encoder_proc.poll() is None:
-            # Refresh queue periodically or on time change
-            current_profile = get_current_time_profile()
-            queue = create_curated_queue(all_music, queue_size)
-            log(f"Queue: {len(queue)} tracks curated for {current_profile['name']}")
-            tracks_since_reshuffle = 0
+            # Get current program context from schedule
+            ctx = get_program_context(station_schedule)
+            profile = ctx.music_profile
+            segment_interval = ctx.segment_after_tracks
+
+            log(f"🎯 Show: {ctx.show_name} ({ctx.show_id})")
+            log(f"   {ctx.show_description}")
+
+            # Create queue based on show's music profile
+            queue = create_curated_queue(all_music, queue_size, profile)
+            log(f"Queue: {len(queue)} tracks curated for {ctx.show_name}")
 
             for track in queue:
                 if not running or encoder_proc.poll() is not None:
                     break
 
-                # Check if time period changed - if so, break and re-curate
-                new_profile = get_current_time_profile()
-                if new_profile["name"] != current_profile["name"]:
-                    log(f"Time shifted to {new_profile['name']} - re-curating...")
+                # Check if show changed - if so, break and re-curate
+                new_ctx = get_program_context(station_schedule)
+                if new_ctx.show_id != ctx.show_id:
+                    log(f"Show changed to {new_ctx.show_name} - re-curating...")
                     break
 
                 # Check for scheduled or forced podcast
-                if all_podcasts and (force_podcast or should_play_podcast()):
+                now = datetime.now()
+                current_slot = now.strftime("%Y%m%d%H")
+                should_podcast = (
+                    ctx.podcasts_enabled
+                    and now.hour in ctx.podcast_hours
+                    and last_podcast_slot != current_slot
+                )
+
+                if all_podcasts and (force_podcast or should_podcast):
                     podcast = select_podcast(all_podcasts)
                     if podcast:
                         podcast_name = clean_name(podcast)
@@ -932,11 +1055,10 @@ def run():
                         duration_str = f" ({int(podcast_duration // 60)}:{int(podcast_duration % 60):02d})" if podcast_duration else ""
                         prefix = "📻 [FORCED] PODCAST:" if force_podcast else "📻 PODCAST:"
                         log(f"{prefix} {podcast_name}{duration_str}")
-                        update_now_playing(podcast_name, "podcast", None, current_profile["name"])
-                        force_podcast = False  # Clear before playback
+                        update_now_playing(podcast_name, "podcast", None, ctx.show_id, ctx.show_name)
+                        force_podcast = False
                         if pipe_track(podcast, encoder_proc, is_speech=True):
-                            last_podcast_hour = datetime.now().hour
-                            # Record to history
+                            last_podcast_slot = current_slot
                             if HISTORY_ENABLED:
                                 try:
                                     history = get_history()
@@ -944,7 +1066,7 @@ def run():
                                         filepath=str(podcast),
                                         track_name=podcast_name,
                                         vibe="podcast",
-                                        time_period=current_profile["name"],
+                                        time_period=ctx.show_id,
                                         listeners=get_listener_count(),
                                     )
                                 except Exception:
@@ -966,27 +1088,25 @@ def run():
                 track_duration = get_track_duration(track)
 
                 start_time = 0
-                play_duration = track_duration  # Pass duration for fade out
+                play_duration = track_duration
 
                 if track_duration and track_duration > MAX_TRACK_DURATION:
-                    # Long track - pick a random chunk
                     play_duration = random.uniform(CHUNK_MIN_DURATION, CHUNK_MAX_DURATION)
-                    max_start = track_duration - play_duration - 10  # Leave 10s buffer at end
+                    max_start = track_duration - play_duration - 10
                     if max_start > 10:
-                        start_time = random.uniform(10, max_start)  # Skip first 10s (often intro)
+                        start_time = random.uniform(10, max_start)
                     mins = int(start_time // 60)
                     secs = int(start_time % 60)
                     log(f"♪ {name} [{mood.vibe}, e:{mood.energy:.1f}] (chunk @{mins}:{secs:02d})")
                 else:
                     log(f"♪ {name} [{mood.vibe}, e:{mood.energy:.1f}]")
 
-                update_now_playing(name, "music", mood.vibe, current_profile["name"])
+                update_now_playing(name, "music", mood.vibe, ctx.show_id, ctx.show_name)
 
                 if not pipe_track(track, encoder_proc, start_time, play_duration):
                     log("Pipe failed, reconnecting...")
                     break
 
-                # Record to play history
                 if HISTORY_ENABLED:
                     try:
                         history = get_history()
@@ -994,27 +1114,25 @@ def run():
                             filepath=str(track),
                             track_name=name,
                             vibe=mood.vibe,
-                            time_period=current_profile["name"],
+                            time_period=ctx.show_id,
                             listeners=get_listener_count(),
                         )
                     except Exception:
-                        pass  # Non-critical
+                        pass
 
-                tracks_since_reshuffle += 1
                 tracks_since_segment += 1
 
-                # Decide whether to play a segment
-                if should_play_segment(current_profile["name"]):
+                # Play segment based on show's segment_after_tracks setting
+                if force_segment or tracks_since_segment >= segment_interval:
                     seg = select_segment(SEGMENTS_DIR)
                     if seg:
                         seg_name = clean_name(seg, is_segment=True)
-                        is_listener_dedication = "listener_dedication" in seg.name.lower()
+                        is_listener_dedication = "listener_dedication" in seg.name.lower() or "listener_" in seg.name.lower()
                         log(f"🎙 {seg_name}")
-                        update_now_playing(seg_name, "segment", None, current_profile["name"])
+                        update_now_playing(seg_name, "segment", None, ctx.show_id, ctx.show_name)
                         if not pipe_track(seg, encoder_proc, is_speech=True):
                             log("Segment pipe failed, reconnecting...")
                             break
-                        # Delete listener dedications after playing (one-time use)
                         if is_listener_dedication:
                             try:
                                 seg.unlink()
@@ -1025,7 +1143,7 @@ def run():
                         force_segment = False
 
             if running and encoder_proc.poll() is None:
-                log("Queue complete, refreshing for current time period...")
+                log("Queue complete, refreshing for current show...")
 
         if running:
             log("Encoder died, restarting...")
