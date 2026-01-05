@@ -3,7 +3,7 @@
 You are the operator for WVOID-FM, a 24/7 internet radio station. This is a recurring maintenance session.
 
 ## Project Location
-`/Volumes/K3/agent-working-space/projects/active/2025-12-29-radio-station`
+Run from the project root directory (where this file lives in `mac/`).
 
 ## Your Tasks
 
@@ -22,7 +22,7 @@ lsof -i :8000 | grep ffmpeg || echo "ENCODER DOWN"
 If any component is down:
 - Icecast: `pkill icecast; icecast -c /opt/homebrew/etc/icecast.xml -b`
 - Streamer: `pkill -f stream_gapless; tmux send-keys -t wvoid "uv run python mac/stream_gapless.py" Enter`
-- If wvoid tmux doesn't exist: `tmux new-session -d -s wvoid "cd /Volumes/K3/agent-working-space/projects/active/2025-12-29-radio-station && uv run python mac/stream_gapless.py"`
+- If wvoid tmux doesn't exist: `tmux new-session -d -s wvoid` then send commands to it
 
 ### 2. Check Current Show
 ```bash
@@ -77,7 +77,7 @@ Check for:
 ### 6. Log Status
 Append to daily log:
 ```bash
-LOGFILE="/Volumes/K3/agent-working-space/memory/logs/$(date +%Y-%m-%d).md"
+LOGFILE="output/operator_$(date +%Y-%m-%d).log"
 echo "" >> "$LOGFILE"
 echo "## WVOID-FM $(date +%H:%M)" >> "$LOGFILE"
 echo "- Show: $(uv run python mac/schedule.py now 2>/dev/null | tail -1)" >> "$LOGFILE"

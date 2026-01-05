@@ -1,21 +1,45 @@
 # WVOID-FM Configuration
+# Copy this file to config.yaml and customize for your setup
 
-# Music sources (list of directories containing audio files)
+# Music sources - directories containing audio files (mp3, flac, m4a, wav)
+# The streamer scans these recursively
 music_sources:
-  - /path/to/your/music
+  - ~/Music
   - /path/to/more/music
 
-# Icecast settings
+# Voice reference for TTS cloning (Chatterbox)
+# A 10-30 second WAV file of the voice you want to clone
+voice_reference: ./voice_reference/operator_voice.wav
+
+# LLM settings (for Claude CLI or LM Studio)
+# Used by content generators to write DJ scripts
+llm:
+  base_url: http://localhost:1234/v1  # LM Studio default
+  timeout: 60
+  temperature: 0.8
+  max_tokens: 300
+
+# Chatterbox TTS settings
+tts:
+  exaggeration: 0.5   # Voice expressiveness (0-1)
+  cfg_weight: 0.5     # Classifier-free guidance
+  temperature: 0.8    # Sampling temperature
+
+# Icecast streaming server
 icecast:
   host: localhost
   port: 8000
   mount: /stream
-  source_password: YOUR_SOURCE_PASSWORD
+  source_password: YOUR_SOURCE_PASSWORD  # Must match icecast.xml
 
-# Cloudflare tunnel (optional)
-tunnel:
-  name: wvoid-radio
-  
-# API server
+# Cloudflare tunnel (optional - for public streaming)
+# tunnel:
+#   name: your-tunnel-name
+
+# API server for now-playing info
 api:
   port: 8001
+
+# Content generation
+generation:
+  segments_ahead: 10  # Keep this many segments ready
