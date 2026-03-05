@@ -5,6 +5,7 @@ Monitors all radio components and auto-restarts on failure.
 Sends Pushover alerts when things go wrong.
 """
 
+import shutil
 import subprocess
 import urllib.request
 import json
@@ -12,6 +13,9 @@ import time
 import os
 from datetime import datetime
 from pathlib import Path
+
+# Derive all paths from project root (parent of mac/)
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 # Configuration
 CHECK_INTERVAL = 30  # seconds
@@ -22,18 +26,21 @@ LOG_FILE = Path("/tmp/writ_watchdog.log")
 PUSHOVER_USER = os.environ.get("PUSHOVER_USER", "")
 PUSHOVER_TOKEN = os.environ.get("PUSHOVER_TOKEN", "")
 
+# Find icecast binary: env var > PATH > common locations
+ICECAST_BIN = os.environ.get("ICECAST_BIN") or shutil.which("icecast") or "/opt/homebrew/opt/icecast/bin/icecast"
+
 # Component definitions
 COMPONENTS = {
     "icecast": {
         "check_url": "http://localhost:8000/status-json.xsl",
         "process_name": "icecast",
-        "start_cmd": ["/opt/homebrew/opt/icecast/bin/icecast", "-c", "/Volumes/K3/agent-working-space/projects/active/2025-12-29-radio-station/config/icecast.xml"],
+        "start_cmd": [ICECAST_BIN, "-c", str(PROJECT_ROOT / "config" / "icecast.xml")],
         "critical": True,
     },
     "streamer": {
         "check_url": None,  # Check by process
         "process_name": "stream_gapless",
-        "start_cmd": ["uv", "run", "python", "/Volumes/K3/agent-working-space/projects/active/2025-12-29-radio-station/mac/stream_gapless.py"],
+        "start_cmd": ["uv", "run", "python", str(PROJECT_ROOT / "mac" / "stream_gapless.py")],
         "critical": True,
     },
     "tunnel": {
@@ -45,7 +52,7 @@ COMPONENTS = {
     "api": {
         "check_url": "http://localhost:8001/now-playing",
         "process_name": "now_playing_server",
-        "start_cmd": ["uv", "run", "python", "/Volumes/K3/agent-working-space/projects/active/2025-12-29-radio-station/mac/now_playing_server.py"],
+        "start_cmd": ["uv", "run", "python", str(PROJECT_ROOT / "mac" / "now_playing_server.py")],
         "critical": False,
     },
 }

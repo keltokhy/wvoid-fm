@@ -5,7 +5,7 @@
 set -euo pipefail
 
 # Cron runs with a minimal PATH; ensure Homebrew-installed CLIs are available.
-export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.local/bin"
 
 cd "$(dirname "$0")"
 

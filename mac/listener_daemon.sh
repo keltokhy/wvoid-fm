@@ -6,7 +6,7 @@
 # Typical turnaround: ~2-3 minutes from message to audio in the queue.
 # The streamer picks up new segments between its current playback items.
 
-RADIO_DIR="/Volumes/K3/agent-working-space/projects/active/2025-12-29-radio-station"
+RADIO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 MESSAGES_FILE="$HOME/.writ/messages.json"
 POLL_INTERVAL=30  # seconds between checks
 

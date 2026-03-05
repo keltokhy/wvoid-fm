@@ -7,11 +7,12 @@ Server: github.com/kortexa-ai/music-gen.server (default: localhost:4009)
 
 import base64
 import json
+import os
 import urllib.error
 import urllib.request
 from pathlib import Path
 
-MUSIC_GEN_BASE_URL = "http://localhost:4009"
+MUSIC_GEN_BASE_URL = os.environ.get("MUSIC_GEN_URL", "http://localhost:4009")
 
 
 def is_server_available(base_url: str = MUSIC_GEN_BASE_URL, timeout: float = 2.0) -> bool:

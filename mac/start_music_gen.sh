@@ -10,7 +10,11 @@
 
 set -euo pipefail
 
-MUSIC_GEN_DIR="/Volumes/K3/agent-working-space/projects/active/music-gen.server"
+MUSIC_GEN_DIR="${MUSIC_GEN_DIR:-$(cd "$(dirname "$0")/../../music-gen.server" 2>/dev/null && pwd || echo "")}"
+if [ -z "$MUSIC_GEN_DIR" ] || [ ! -d "$MUSIC_GEN_DIR" ]; then
+    echo "Warning: music-gen.server not found. Set MUSIC_GEN_DIR or clone it alongside this repo."
+    echo "  Expected: $(cd "$(dirname "$0")/../.." && pwd)/music-gen.server"
+fi
 RADIO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SESSION="writ"
 
