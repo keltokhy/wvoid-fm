@@ -38,7 +38,7 @@ COMPONENTS = {
         "critical": True,
     },
     "streamer": {
-        "check_url": None,  # Check by process
+        "check_url": "http://localhost:8001/now-playing",
         "process_name": "stream_gapless",
         "start_cmd": ["uv", "run", "python", str(PROJECT_ROOT / "mac" / "stream_gapless.py")],
         "critical": True,
@@ -48,12 +48,6 @@ COMPONENTS = {
         "process_name": "cloudflared",
         "start_cmd": ["cloudflared", "tunnel", "run", "writ-radio"],
         "critical": True,
-    },
-    "api": {
-        "check_url": "http://localhost:8001/now-playing",
-        "process_name": "now_playing_server",
-        "start_cmd": ["uv", "run", "python", str(PROJECT_ROOT / "mac" / "now_playing_server.py")],
-        "critical": False,
     },
 }
 

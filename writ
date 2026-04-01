@@ -12,7 +12,7 @@
 #   writ generate <talk|music> Run content generation (foreground)
 #
 # Components:
-#   Core (default):  icecast, stream, api, tunnel
+#   Core (default):  icecast, stream, tunnel
 #   Content:         music-gen, bumpers, talkgen, listener
 #   Groups:          core, content, all
 # ──────────────────────────────────────────────────────────────
@@ -25,26 +25,26 @@ MUSIC_GEN_DIR="${MUSIC_GEN_DIR:-}"
 
 SESSION="writ"
 
-CORE_COMPONENTS=(icecast stream api tunnel)
+CORE_COMPONENTS=(icecast stream tunnel)
 CONTENT_COMPONENTS=(music-gen bumpers talkgen listener)
 ALL_COMPONENTS=("${CORE_COMPONENTS[@]}" "${CONTENT_COMPONENTS[@]}")
 
 declare -A COMP_PORT=(
-    [icecast]=8000 [stream]="" [api]=8001 [tunnel]=""
+    [icecast]=8000 [stream]=8001 [tunnel]=""
     [music-gen]=4009 [bumpers]="" [talkgen]="" [listener]=""
 )
 declare -A COMP_HEALTH_URL=(
     [icecast]="http://localhost:8000/status-json.xsl"
-    [stream]="" [api]="http://localhost:8001/now-playing" [tunnel]=""
+    [stream]="http://localhost:8001/now-playing" [tunnel]=""
     [music-gen]="http://localhost:4009/health" [bumpers]="" [talkgen]="" [listener]=""
 )
 declare -A COMP_PGREP=(
-    [icecast]="icecast" [stream]="stream_gapless" [api]="now_playing_server"
+    [icecast]="icecast" [stream]="stream_gapless"
     [tunnel]="cloudflared.*wvoid" [music-gen]="music.gen"
     [bumpers]="bumper_daemon" [talkgen]="talk_daemon" [listener]="listener_daemon"
 )
 declare -A COMP_WAIT=(
-    [icecast]=30 [stream]=10 [api]=10 [tunnel]=10
+    [icecast]=30 [stream]=10 [tunnel]=10
     [music-gen]=180 [bumpers]=10 [talkgen]=10 [listener]=10
 )
 
@@ -107,7 +107,6 @@ get_start_cmd() {
     case "$1" in
         icecast)   echo "/opt/homebrew/bin/icecast -c '$PROJECT_ROOT/config/icecast.xml'" ;;
         stream)    echo "cd '$PROJECT_ROOT' && uv run python mac/stream_gapless.py" ;;
-        api)       echo "cd '$PROJECT_ROOT' && uv run python mac/now_playing_server.py" ;;
         tunnel)    echo "cloudflared tunnel run wvoid-radio" ;;
         music-gen)
             [[ -z "$MUSIC_GEN_DIR" || ! -d "$MUSIC_GEN_DIR" ]] && \
@@ -163,7 +162,7 @@ cmd_start() {
     case "$target" in
         ""|core)
             log "Starting core..."
-            start_one icecast; start_one stream; start_one api; start_one tunnel
+            start_one icecast; start_one stream; start_one tunnel
             start_one music-gen; start_one bumpers; start_one talkgen; start_one listener
             echo ""; ok "WRIT-FM up. tmux attach -t $SESSION" ;;
         all)
@@ -182,10 +181,10 @@ cmd_stop() {
     case "$target" in
         ""|all)
             log "Stopping all..."
-            for c in listener talkgen bumpers music-gen tunnel api stream icecast; do stop_one "$c"; done
+            for c in listener talkgen bumpers music-gen tunnel stream icecast; do stop_one "$c"; done
             local n; n=$(tmux list-windows -t "$SESSION" 2>/dev/null | wc -l | tr -d ' ')
             (( n <= 1 )) && { tmux kill-session -t "$SESSION" 2>/dev/null || true; } ;;
-        core)    for c in tunnel api stream icecast; do stop_one "$c"; done ;;
+        core)    for c in tunnel stream icecast; do stop_one "$c"; done ;;
         content) for c in listener talkgen bumpers music-gen; do stop_one "$c"; done ;;
         *)       validate_component "$target"; stop_one "$target" ;;
     esac
@@ -281,7 +280,7 @@ cmd_help() {
   writ attach [component]     Attach to tmux window
   writ generate <talk|music>  Generate content (foreground)
 
-  Components:  icecast  stream  api  tunnel  music-gen  bumpers  talkgen  listener
+  Components:  icecast  stream  tunnel  music-gen  bumpers  talkgen  listener
   Groups:      core  content  all
 
 EOF

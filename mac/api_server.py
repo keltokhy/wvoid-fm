@@ -2,8 +2,8 @@
 """
 WRIT-FM Now Playing API
 
-Simple HTTP server that exposes the current track info.
-Reads from the now_playing.json file written by the streamer.
+HTTP server that exposes current track info, schedule, history, and more.
+Runs as a daemon thread inside the streamer process.
 """
 
 import http.server
@@ -11,6 +11,7 @@ import json
 import os
 import socketserver
 import subprocess
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -43,7 +44,6 @@ _discogs_cache: dict[str, dict | None] = {}
 _discogs_last_track: str | None = None
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_NOW_PLAYING_FILE = PROJECT_ROOT / "output" / "now_playing.json"
 MESSAGES_FILE = Path.home() / ".writ" / "messages.json"
 
 # Rate limiting for messages
@@ -51,13 +51,15 @@ MESSAGE_COOLDOWN = 300  # 5 minutes between messages per IP
 last_message_times: dict[str, float] = {}
 
 PORT = int(os.environ.get("WRIT_NOW_PLAYING_PORT", "8001"))
-NOW_PLAYING_FILE = Path(
-    os.environ.get("WRIT_NOW_PLAYING_FILE", str(DEFAULT_NOW_PLAYING_FILE))
-).expanduser()
 ICECAST_STATUS_URL = os.environ.get(
     "ICECAST_STATUS_URL",
     "http://localhost:8000/status-json.xsl",
 )
+
+# Shared state — set by start_api_thread()
+_track_info: dict = {}
+_encoder_getter = None
+_listener_fn = None
 
 # Server start time for uptime tracking
 SERVER_START_TIME = time.time()
@@ -167,18 +169,6 @@ class NowPlayingHandler(http.server.BaseHTTPRequestHandler):
         pass  # Suppress logging
 
 
-def get_listeners() -> int:
-    """Get listener count from local Icecast."""
-    try:
-        with urllib.request.urlopen(ICECAST_STATUS_URL, timeout=2) as response:
-            data = json.loads(response.read().decode())
-            source = data.get("icestats", {}).get("source", {})
-            return source.get("listeners", 0)
-    except:
-        pass
-    return 0
-
-
 def check_process(name: str) -> bool:
     """Check if process is running."""
     try:
@@ -198,7 +188,8 @@ def check_url(url: str, timeout: int = 2) -> bool:
 def get_health_status() -> dict:
     """Get comprehensive health status of all components."""
     icecast_ok = check_url(ICECAST_STATUS_URL)
-    streamer_ok = check_process("stream_gapless")
+    encoder = _encoder_getter() if _encoder_getter else None
+    streamer_ok = encoder is not None and encoder.poll() is None
     tunnel_ok = check_process("cloudflared")
     return {
         "status": "healthy" if icecast_ok and streamer_ok and tunnel_ok else "degraded",
@@ -207,7 +198,7 @@ def get_health_status() -> dict:
             "icecast": {"status": "up" if icecast_ok else "down"},
             "streamer": {"status": "up" if streamer_ok else "down"},
             "tunnel": {"status": "up" if tunnel_ok else "down"},
-            "api": {"status": "up"},  # We're responding
+            "api": {"status": "up"},
         },
         "uptime_seconds": int(time.time() - SERVER_START_TIME),
     }
@@ -218,13 +209,14 @@ def get_stats() -> dict:
     uptime = int(time.time() - SERVER_START_TIME)
     hours = uptime // 3600
     minutes = (uptime % 3600) // 60
+    listeners = _listener_fn() if _listener_fn else 0
 
     return {
         "uptime": f"{hours}h {minutes}m",
         "uptime_seconds": uptime,
         "tracks_played": TRACKS_PLAYED,
         "total_listeners_served": TOTAL_LISTENERS_SERVED,
-        "current_listeners": get_listeners(),
+        "current_listeners": listeners,
         "api_started": datetime.fromtimestamp(SERVER_START_TIME).isoformat(),
     }
 
@@ -307,12 +299,9 @@ def get_messages(limit: int = 20) -> list[dict]:
 
 
 def get_now_playing() -> dict:
-    """Read current track info from JSON file."""
-    try:
-        data = json.loads(NOW_PLAYING_FILE.read_text()) if NOW_PLAYING_FILE.exists() else {}
-    except:
-        data = {}
-    data["listeners"] = get_listeners()
+    """Read current track info from shared in-memory state."""
+    data = dict(_track_info)
+    data["listeners"] = _listener_fn() if _listener_fn else 0
     return data
 
 
@@ -475,25 +464,28 @@ class ReusableTCPServer(socketserver.TCPServer):
     allow_reuse_address = True
 
 
-def run():
-    with ReusableTCPServer(("", PORT), NowPlayingHandler) as httpd:
-        print(f"Now Playing API running on http://localhost:{PORT}/now-playing")
-        print(f"  /schedule - Current and upcoming shows")
-        print(f"  /discogs  - Current track's Discogs info (bumpers only)")
-        print(f"  /qr       - QR code for Discogs page (PNG)")
-        if DISCOGS_ENABLED:
-            if DISCOGS_HAS_CREDS:
-                print("Discogs lookup: enabled (credentials found)")
-            else:
-                print("Discogs lookup: disabled (no DISCOGS_TOKEN env var)")
-                print("  Set DISCOGS_TOKEN or DISCOGS_KEY+DISCOGS_SECRET")
-                print("  Get credentials at https://www.discogs.com/settings/developers")
-        else:
-            print("Discogs lookup: disabled (module not found)")
-        print(f"QR generation:  {'enabled' if QR_ENABLED else 'disabled (install qrcode)'}")
-        print("Ctrl+C to stop")
-        httpd.serve_forever()
+def start_api_thread(track_info: dict, encoder_getter, listener_fn) -> threading.Thread:
+    """Start the HTTP API server in a daemon thread.
 
+    Args:
+        track_info: Mutable dict shared with the streamer (mutated in-place).
+        encoder_getter: Callable returning the current encoder subprocess.
+        listener_fn: Callable returning the current listener count.
+    """
+    global _track_info, _encoder_getter, _listener_fn, SERVER_START_TIME
+    _track_info = track_info
+    _encoder_getter = encoder_getter
+    _listener_fn = listener_fn
+    SERVER_START_TIME = time.time()
 
-if __name__ == "__main__":
-    run()
+    def _serve():
+        try:
+            with ReusableTCPServer(("", PORT), NowPlayingHandler) as httpd:
+                httpd.serve_forever()
+        except OSError as e:
+            from stream_gapless import log
+            log(f"API server failed to start: {e}")
+
+    t = threading.Thread(target=_serve, daemon=True)
+    t.start()
+    return t

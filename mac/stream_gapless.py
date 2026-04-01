@@ -206,9 +206,8 @@ def update_now_playing(
     segment_type: str | None = None,
     caption: str | None = None,
 ):
-    """Write current track info to JSON file."""
-    global current_track_info
-    current_track_info = {
+    """Update current track info in-memory and write to disk for external sync."""
+    new_info = {
         "track": track,
         "type": track_type,
         "host": host,
@@ -219,8 +218,11 @@ def update_now_playing(
         "listeners": get_listener_count(),
     }
     if caption is not None:
-        current_track_info["ai_generated"] = True
-        current_track_info["caption"] = caption
+        new_info["ai_generated"] = True
+        new_info["caption"] = caption
+    # Mutate in-place so the API thread's reference stays valid
+    current_track_info.clear()
+    current_track_info.update(new_info)
     for path in NOW_PLAYING_PATHS:
         try:
             write_json_atomic(path, current_track_info)
@@ -563,6 +565,11 @@ def run():
             log(f"Loaded schedule with {len(station_schedule.shows)} shows")
         except Exception as e:
             log(f"Schedule load failed, using fallback: {e}")
+
+    # Start embedded API server
+    from api_server import start_api_thread
+    start_api_thread(current_track_info, lambda: encoder_proc, get_listener_count)
+    log("API server started on port 8001")
 
     # Count talk segments
     talk_count = 0
