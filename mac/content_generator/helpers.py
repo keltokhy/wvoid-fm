@@ -286,7 +286,8 @@ def concatenate_audio(chunk_files: list[Path], output_path: Path, gap_seconds: f
         cmd = [
             "ffmpeg", "-y", "-f", "concat", "-safe", "0",
             "-i", str(list_file),
-            "-c", "copy", str(output_path)
+            "-ar", "24000", "-ac", "1",
+            str(output_path)
         ]
 
         result = subprocess.run(cmd, capture_output=True, timeout=120)
@@ -296,7 +297,8 @@ def concatenate_audio(chunk_files: list[Path], output_path: Path, gap_seconds: f
             cf.unlink(missing_ok=True)
 
         if result.returncode != 0:
-            log(f"  Concat failed: {result.stderr.decode()[:100]}")
+            stderr = result.stderr.decode()
+            log(f"  Concat failed: {stderr[-500:]}")
             return False
 
         return output_path.exists()

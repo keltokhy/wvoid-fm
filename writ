@@ -122,7 +122,7 @@ kill_port() {
     [[ -z "$port" ]] && return
     lsof -ti ":$port" 2>/dev/null | while read -r pid; do
         kill "$pid" 2>/dev/null && warn "killed stale process $pid on port $port"
-    done
+    done || true
     sleep 1
 }
 
