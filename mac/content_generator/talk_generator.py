@@ -384,11 +384,15 @@ def render_multi_voice(script: str, output_path: Path, voices: dict[str, str]) -
 
     log(f"  Rendering {len(parts)} dialogue segments...")
 
+    # Use a temp directory for chunks so the streamer doesn't consume them
+    import tempfile, shutil
+    tmp_dir = Path(tempfile.mkdtemp(prefix="writ_dialogue_"))
+
     # Render each part
     chunk_files = []
     for i, (speaker, text) in enumerate(parts):
         voice = voice_map.get(speaker, host_voice)
-        chunk_path = output_path.with_stem(f"{output_path.stem}_part{i:03d}")
+        chunk_path = tmp_dir / f"part{i:03d}.wav"
 
         # Clean text
         text = preprocess_for_tts(text)
@@ -408,9 +412,12 @@ def render_multi_voice(script: str, output_path: Path, voices: dict[str, str]) -
 
     if not chunk_files:
         log("  No dialogue parts rendered")
+        shutil.rmtree(tmp_dir, ignore_errors=True)
         return False
 
-    return concatenate_audio(chunk_files, output_path, gap_seconds=0.3)
+    result = concatenate_audio(chunk_files, output_path, gap_seconds=0.3)
+    shutil.rmtree(tmp_dir, ignore_errors=True)
+    return result
 
 
 # =============================================================================

@@ -437,6 +437,29 @@ def decode_to_pcm(filepath: Path, start_time: float = 0, duration: float = None,
     )
 
 
+def pipe_silence(encoder: subprocess.Popen, seconds: float = 30.0) -> bool:
+    """Feed silence to encoder to keep the stream alive during idle periods.
+    Paces output in ~1-second bursts so we don't flood the pipe buffer.
+    Returns False if the encoder died."""
+    # s16le stereo 44100Hz = 176400 bytes/sec
+    bytes_per_sec = 44100 * 2 * 2
+    one_second = b'\x00' * bytes_per_sec
+    elapsed = 0.0
+
+    while elapsed < seconds and running:
+        if encoder.poll() is not None:
+            return False
+        try:
+            encoder.stdin.write(one_second)
+            encoder.stdin.flush()
+        except BrokenPipeError:
+            return False
+        elapsed += 1.0
+        time.sleep(0.9)  # pace slightly under real-time so buffer stays fed
+
+    return True
+
+
 def start_encoder() -> subprocess.Popen:
     """Start persistent ffmpeg encoder to Icecast."""
     return subprocess.Popen(
@@ -486,6 +509,7 @@ def pipe_track(filepath: Path, encoder: subprocess.Popen, start_time: float = 0,
     try:
         decoder = decode_to_pcm(filepath, start_time, duration, is_speech=is_speech)
         last_cmd_check = time.time()
+        bytes_piped = 0
 
         while running and not skip_current:
             chunk = decoder.stdout.read(8192)
@@ -494,6 +518,7 @@ def pipe_track(filepath: Path, encoder: subprocess.Popen, start_time: float = 0,
             try:
                 encoder.stdin.write(chunk)
                 encoder.stdin.flush()
+                bytes_piped += len(chunk)
             except BrokenPipeError:
                 try:
                     stderr = encoder.stderr.read().decode() if encoder.stderr else ""
@@ -515,6 +540,10 @@ def pipe_track(filepath: Path, encoder: subprocess.Popen, start_time: float = 0,
                 elif cmd == "segment":
                     log("Will play segment next...")
                     force_segment = True
+
+        if bytes_piped == 0:
+            log(f"    WARNING: {filepath.name} produced no audio — skipping")
+            return "empty"
 
         return True
 
@@ -640,7 +669,15 @@ def run():
                         segment_type=seg_type,
                     )
 
-                    if not pipe_track(talk_seg, encoder_proc, is_speech=True):
+                    result = pipe_track(talk_seg, encoder_proc, is_speech=True)
+                    if result == "empty":
+                        # Corrupt/empty file — delete it but don't count as played
+                        try:
+                            talk_seg.unlink()
+                        except Exception:
+                            pass
+                        continue
+                    if not result:
                         log("Talk pipe failed, reconnecting...")
                         break
 
@@ -730,8 +767,9 @@ def run():
                         break
                     ai_bumper = select_ai_bumper(ctx.show_id)
                     if not ai_bumper:
-                        log("  No bumpers either — waiting 30s")
-                        time.sleep(30)
+                        log("  No bumpers either — holding silence 30s")
+                        if not pipe_silence(encoder_proc, 30.0):
+                            break
                         break
                     bpath, bstart, bdur, bcaption, bdisplay = ai_bumper
                     bname = bdisplay or "AI Music"

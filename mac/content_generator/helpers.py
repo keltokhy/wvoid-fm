@@ -298,7 +298,11 @@ def concatenate_audio(chunk_files: list[Path], output_path: Path, gap_seconds: f
 
         if result.returncode != 0:
             stderr = result.stderr.decode()
-            log(f"  Concat failed: {stderr[-500:]}")
+            stdout = result.stdout.decode()
+            log(f"  Concat failed (rc={result.returncode}):")
+            log(f"  STDERR (last 1500): {stderr[-1500:]}")
+            if stdout.strip():
+                log(f"  STDOUT: {stdout[-500:]}")
             return False
 
         return output_path.exists()
@@ -338,17 +342,32 @@ def render_single_voice(text: str, output_path: Path, voice: str) -> bool:
 
     log(f"  Rendering {len(chunks)} chunks with voice {voice}...")
 
+    # Use a temp directory for chunks so the streamer doesn't consume them
+    import tempfile
+    tmp_dir = Path(tempfile.mkdtemp(prefix="writ_chunks_"))
+
     chunk_files: list[Path] = []
+    failed_chunks = 0
     for i, chunk in enumerate(chunks):
-        chunk_path = output_path.with_stem(f"{output_path.stem}_chunk{i:03d}")
+        chunk_path = tmp_dir / f"chunk{i:03d}.wav"
         for attempt in range(2):
             if render_kokoro(chunk, chunk_path, voice):
                 chunk_files.append(chunk_path)
                 break
             time.sleep(2)
+        else:
+            failed_chunks += 1
+
+    if failed_chunks:
+        log(f"  {failed_chunks}/{len(chunks)} chunks failed to render")
 
     if not chunk_files:
         log("  No chunks rendered")
+        tmp_dir.rmdir()
         return False
 
-    return concatenate_audio(chunk_files, output_path)
+    result = concatenate_audio(chunk_files, output_path)
+    # Clean up temp directory
+    import shutil
+    shutil.rmtree(tmp_dir, ignore_errors=True)
+    return result
