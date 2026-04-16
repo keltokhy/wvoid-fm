@@ -37,7 +37,7 @@ tmux send-keys -t writ:stream "uv run python mac/feeder.py --start-ezstream" Ent
 
 If Icecast is down:
 ```bash
-pkill icecast; icecast -c /opt/homebrew/etc/icecast.xml -b
+pkill icecast; icecast -c config/icecast.xml -b
 ```
 
 ### 2. Stock Talk Segments
@@ -50,14 +50,15 @@ If any show has fewer than 6 segments, generate more.
 **CRITICAL: Only run ONE talk_generator at a time. NEVER run multiple in parallel.
 Each loads ~2.7 GB TTS model — parallel runs exhaust RAM (96 GB system).**
 
-Generate for all low shows (sequential internally):
+**Preferred: Use `--plan` to generate structured shows** (intro, themed segments, outro).
+The planner uses the show log for continuity and weaves in listener messages:
 ```bash
-cd mac/content_generator && uv run python talk_generator.py --all --min 6
+cd mac/content_generator && uv run python talk_generator.py --plan --show midnight_signal
 ```
 
-Or chain specific shows:
+For quick restocking without planning, use `--all`:
 ```bash
-cd mac/content_generator && uv run python talk_generator.py --show sonic_archaeology --count 3 && uv run python talk_generator.py --show crosswire --count 3
+cd mac/content_generator && uv run python talk_generator.py --all --min 6
 ```
 
 Prioritize: current show first, then upcoming shows, then anything below minimum.

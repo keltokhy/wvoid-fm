@@ -39,7 +39,7 @@ declare -A COMP_HEALTH_URL=(
     [music-gen]="http://localhost:4009/health" [operator]="" [listener]=""
 )
 declare -A COMP_PGREP=(
-    [icecast]="icecast" [stream]="ezstream.*radio.xml"
+    [icecast]="icecast" [stream]="feeder.py"
     [tunnel]="cloudflared.*wvoid" [music-gen]="music.gen"
     [operator]="operator_daemon" [listener]="listener_daemon"
 )

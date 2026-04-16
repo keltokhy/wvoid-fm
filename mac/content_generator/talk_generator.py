@@ -871,13 +871,16 @@ def generate_for_current(schedule: StationSchedule, count: int = 3) -> int:
     return generate_for_show(resolved.show_id, schedule, count)
 
 
-def generate_all(schedule: StationSchedule, count_per_show: int = 3) -> dict[str, int]:
-    """Generate content for all shows."""
+def generate_all(schedule: StationSchedule, count_per_show: int = 3, min_threshold: int | None = None) -> dict[str, int]:
+    """Generate content for all shows. If min_threshold is set, skip shows above it."""
+    counts = count_segments()
     log("=== WRIT-FM Full Talk Content Generation ===")
-    log(f"Generating {count_per_show} segments per show")
+    log(f"Generating {count_per_show} segments per show" + (f" (only shows below {min_threshold})" if min_threshold else ""))
 
     results = {}
     for show_id in schedule.shows:
+        if min_threshold and counts.get(show_id, 0) >= min_threshold:
+            continue
         results[show_id] = generate_for_show(show_id, schedule, count_per_show)
         time.sleep(3)
 
@@ -914,6 +917,7 @@ def main():
     parser.add_argument("--type", dest="segment_type", help="Specific segment type")
     parser.add_argument("--topic", help="Specific topic")
     parser.add_argument("--count", type=int, default=3, help="Segments to generate (default: 3)")
+    parser.add_argument("--min", type=int, help="Only generate for shows below this threshold (with --all)")
     parser.add_argument("--all", action="store_true", help="Generate for all shows")
     parser.add_argument("--plan", action="store_true", help="Generate a planned show (intro, themed segments, outro)")
     parser.add_argument("--status", action="store_true", help="Show segment counts per show")
@@ -970,7 +974,7 @@ def main():
         show_id = args.show or schedule.resolve().show_id
         generate_planned_show(show_id, schedule)
     elif args.all:
-        generate_all(schedule, args.count)
+        generate_all(schedule, args.count, min_threshold=args.min)
     elif args.show:
         generate_for_show(args.show, schedule, args.count, args.segment_type, args.topic)
     else:

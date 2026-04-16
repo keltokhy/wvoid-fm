@@ -238,25 +238,39 @@ def write_playlist(entries: list[dict]):
 
 
 def run():
-    global running
+    global running, ezstream_proc
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
 
     log("=== WRIT-FM Feeder ===")
     log(f"Playlist: {PLAYLIST_FILE}")
 
+    # Ensure silence file exists for fallback
+    if not SILENCE_FILE.exists():
+        log("Creating silence fallback file...")
+        SILENCE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run([
+            "ffmpeg", "-y", "-v", "quiet",
+            "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+            "-t", "30", str(SILENCE_FILE),
+        ], check=True)
+
     # Shared state for API server
     track_info = {"track": None, "type": None, "show": None}
 
-    # Fake encoder object so API health check reports "up" when ezstream is running
-    class _EzstreamProxy:
+    # Proxy object so API health check reports "up" when ezstream is running
+    class _StreamProxy:
         def poll(self):
-            return ezstream_proc.poll() if ezstream_proc else 1
+            if ezstream_proc is None:
+                return 1
+            return ezstream_proc.poll()
+
+    _proxy = _StreamProxy()
 
     # Start API server
     try:
         from api_server import start_api_thread
-        start_api_thread(track_info, _EzstreamProxy, get_listener_count)
+        start_api_thread(track_info, lambda: _proxy, get_listener_count)
         log("API server started on port 8001")
     except Exception as e:
         log(f"API server failed: {e}")
@@ -299,6 +313,11 @@ def run():
             track_info.update(np_info)
             # Write to disk for external consumers
             write_now_playing(np_info)
+
+        # Check if ezstream died and restart it
+        if ezstream_proc and ezstream_proc.poll() is not None:
+            log("  ezstream died, restarting...")
+            ezstream_proc = start_ezstream()
 
         # Check if we need to rebuild (e.g., new content appeared)
         if now - last_check >= 30:
