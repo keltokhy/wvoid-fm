@@ -92,11 +92,17 @@ def get_show():
 
 
 def get_talk_segments(show_id: str) -> list[Path]:
-    """Get available talk segments for a show, listener responses first."""
+    """Get available talk segments for a show, respecting sequence order."""
     show_dir = TALK_DIR / show_id
     if not show_dir.exists():
         return []
-    segments = sorted(show_dir.glob("*.wav"), key=lambda p: p.stat().st_mtime)
+    segments = sorted(show_dir.glob("*.wav"), key=lambda p: p.name)
+
+    # If any files have sequence prefixes (00_, 01_, ...), respect the order
+    has_sequence = any(s.name[:3].rstrip("_").isdigit() for s in segments)
+    if has_sequence:
+        return segments
+
     lr = [s for s in segments if "listener_response" in s.name]
     rest = [s for s in segments if "listener_response" not in s.name]
     random.shuffle(rest)

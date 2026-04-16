@@ -51,6 +51,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCHEDULE_PATH = PROJECT_ROOT / "config" / "schedule.yaml"
 OUTPUT_DIR = PROJECT_ROOT / "output" / "talk_segments"
 SCRIPTS_DIR = PROJECT_ROOT / "output" / "scripts"
+SHOW_LOG_DIR = PROJECT_ROOT / "output" / "show_logs"
+MESSAGES_FILE = Path.home() / ".writ" / "messages.json"
 
 sys.path.insert(0, str(PROJECT_ROOT / "mac"))
 from schedule import load_schedule, StationSchedule
@@ -254,19 +256,261 @@ INTERVIEW_GUESTS = [
 
 
 # =============================================================================
+# SHOW LOG — persistent memory across sessions
+# =============================================================================
+
+
+def read_show_log(show_id: str, n: int = 10) -> list[dict]:
+    """Read the last N entries from a show's log."""
+    log_file = SHOW_LOG_DIR / f"{show_id}.jsonl"
+    if not log_file.exists():
+        return []
+    entries = []
+    for line in log_file.read_text().strip().split("\n"):
+        if line.strip():
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return entries[-n:]
+
+
+def append_show_log(show_id: str, segment_type: str, topic: str, summary: str):
+    """Append an entry to a show's log after generating a segment."""
+    SHOW_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    log_file = SHOW_LOG_DIR / f"{show_id}.jsonl"
+    entry = {
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "hour": datetime.now().hour,
+        "type": segment_type,
+        "topic": topic,
+        "summary": summary,
+    }
+    with open(log_file, "a") as f:
+        f.write(json.dumps(entry) + "\n")
+
+
+def format_show_log_for_prompt(show_id: str) -> str:
+    """Format recent show log entries for injection into generation prompt."""
+    entries = read_show_log(show_id)
+    if not entries:
+        return ""
+    lines = ["RECENT EPISODES (what you've covered recently — reference these, build on them, don't repeat):"]
+    for e in entries:
+        lines.append(f"- [{e.get('date','')}] {e.get('type','')}: {e.get('topic','')} — {e.get('summary','')}")
+    return "\n".join(lines)
+
+
+# =============================================================================
+# LISTENER MESSAGES — real messages from real listeners
+# =============================================================================
+
+
+def get_listener_messages(n: int = 5) -> list[dict]:
+    """Get recent listener messages for on-air use."""
+    if not MESSAGES_FILE.exists():
+        return []
+    try:
+        messages = json.loads(MESSAGES_FILE.read_text())
+    except Exception:
+        return []
+    # Filter to substantive messages (skip "hi", "hey", etc.)
+    substantive = [
+        m for m in messages
+        if len(m.get("message", "")) > 20
+        and m.get("read", False)
+    ]
+    # Most recent first
+    substantive.sort(key=lambda m: m.get("timestamp", ""), reverse=True)
+    return substantive[:n]
+
+
+def format_messages_for_prompt() -> str:
+    """Format listener messages for injection into generation prompt."""
+    messages = get_listener_messages()
+    if not messages:
+        return ""
+    lines = ["LISTENER MESSAGES (real messages from real listeners — weave 1-2 into your segment naturally):"]
+    for m in messages:
+        ts = m.get("timestamp", "")[:10]
+        lines.append(f"- [{ts}] \"{m['message']}\"")
+    return "\n".join(lines)
+
+
+# =============================================================================
+# SHOW PLANNER — generates structured show outlines
+# =============================================================================
+
+
+def generate_show_plan(
+    show_id: str,
+    show_name: str,
+    show_description: str,
+    host_id: str,
+    topic_focus: str,
+    segment_types: list[str],
+) -> list[dict] | None:
+    """Generate a structured show plan using Claude.
+
+    Returns a list of segment specs: [{"type": ..., "topic": ..., "note": ...}, ...]
+    """
+    recent_log = format_show_log_for_prompt(show_id)
+    messages = format_messages_for_prompt()
+    now = datetime.now()
+
+    prompt = f"""You are planning the next episode of {show_name} on WRIT-FM.
+Host: {host_id}
+Description: {show_description}
+Focus: {topic_focus}
+Time: {now.strftime('%A, %B %d, %Y at %I:%M %p')}
+
+Available segment types (use EXACTLY these names with underscores): {', '.join(segment_types + ['show_intro', 'show_outro'])}
+
+{recent_log}
+
+{messages}
+
+Design a structured episode with 5-7 segments. The episode should have:
+1. A show_intro (short welcome, ground the listener in time and mood)
+2. 3-4 main segments with a THEMATIC THROUGHLINE connecting them
+3. If listener messages are available, weave a listener_mailbag segment in
+4. A show_outro (wrap the thread, tease what might come next time)
+
+Output ONLY a JSON array. Each element: {{"type": "segment_type", "topic": "specific topic", "note": "brief direction for this segment"}}
+
+Example:
+[
+  {{"type": "show_intro", "topic": "Welcome to The Night Garden", "note": "Ground in the late hour, hint at tonight's theme of sleep and surrender"}},
+  {{"type": "deep_dive", "topic": "The architecture of lullabies", "note": "Main exploration — why these melodies work on the nervous system"}},
+  {{"type": "story", "topic": "The woman who sang her village to sleep", "note": "A narrative that deepens the theme"}},
+  {{"type": "listener_mailbag", "topic": "Messages from the frequency", "note": "Read and respond to listener messages about sleep and music"}},
+  {{"type": "show_outro", "topic": "Signing off", "note": "Wrap the thread about surrender and rest"}}
+]"""
+
+    result = run_claude(prompt, timeout=60, min_length=50, strip_quotes=False)
+    if not result:
+        return None
+
+    # Extract JSON from response
+    try:
+        # Find the JSON array in the response
+        start = result.index("[")
+        end = result.rindex("]") + 1
+        plan = json.loads(result[start:end])
+        if isinstance(plan, list) and len(plan) >= 3:
+            return plan
+    except (ValueError, json.JSONDecodeError):
+        pass
+
+    log("  Failed to parse show plan")
+    return None
+
+
+def generate_planned_show(
+    show_id: str,
+    schedule: "StationSchedule",
+) -> int:
+    """Generate a full planned show — intro, themed segments, outro."""
+    if show_id not in schedule.shows:
+        log(f"Unknown show: {show_id}")
+        return 0
+
+    show = schedule.shows[show_id]
+
+    log(f"\n{'='*60}")
+    log(f"Planning show: {show.name}")
+    log(f"{'='*60}")
+
+    # Generate the plan
+    plan = generate_show_plan(
+        show_id=show_id,
+        show_name=show.name,
+        show_description=show.description,
+        host_id=show.host,
+        topic_focus=show.topic_focus,
+        segment_types=show.segment_types,
+    )
+
+    if not plan:
+        log("  Plan generation failed, falling back to random segments")
+        return generate_for_show(show_id, schedule, count=4)
+
+    log(f"  Plan: {len(plan)} segments")
+    for i, seg in enumerate(plan):
+        log(f"    {i+1}. [{seg['type']}] {seg['topic']}")
+
+    # Normalize segment type names (Claude sometimes omits underscores)
+    TYPE_ALIASES = {
+        "showintro": "show_intro", "showoutro": "show_outro",
+        "stationid": "station_id", "deepdive": "deep_dive",
+        "newsanalysis": "news_analysis", "musicessay": "music_essay",
+        "listenermailbag": "listener_mailbag",
+    }
+    for seg in plan:
+        seg["type"] = TYPE_ALIASES.get(seg["type"], seg["type"])
+
+    # Generate each segment in order, with context from previous segments
+    success = 0
+    show_context_so_far = []
+
+    for i, seg in enumerate(plan):
+        seg_type = seg["type"]
+        topic = seg["topic"]
+        note = seg.get("note", "")
+
+        # Validate segment type
+        if seg_type not in SEGMENT_WORD_TARGETS:
+            log(f"  Skipping unknown type: {seg_type}")
+            continue
+
+        log(f"\n[{i+1}/{len(plan)}]")
+
+        result = generate_segment(
+            show_id=show_id,
+            show_name=show.name,
+            show_description=show.description,
+            host_id=show.host,
+            topic_focus=show.topic_focus,
+            segment_type=seg_type,
+            voices=dict(show.voices),
+            topic=topic,
+            sequence=i,
+            plan_note=note,
+            prior_segments=show_context_so_far,
+        )
+
+        if result:
+            success += 1
+            show_context_so_far.append(f"[{seg_type}] {topic}")
+
+        if i < len(plan) - 1:
+            time.sleep(2)
+
+    return success
+
+
+# =============================================================================
 # CORE GENERATION
 # =============================================================================
 
 
-def select_topic(topic_focus: str, segment_type: str) -> str:
-    """Pick a topic from the pool matching the show's focus."""
+def select_topic(topic_focus: str, segment_type: str, show_id: str | None = None) -> str:
+    """Pick a topic, avoiding recent ones from the show log."""
     pool = TOPIC_POOLS.get(topic_focus, [])
     if not pool:
-        # Fall back to a combined pool
         all_topics = []
         for topics in TOPIC_POOLS.values():
             all_topics.extend(topics)
         pool = all_topics
+
+    # Avoid topics covered recently
+    if show_id:
+        recent = read_show_log(show_id, n=20)
+        recent_topics = {e.get("topic", "").lower() for e in recent}
+        fresh = [t for t in pool if t.lower() not in recent_topics]
+        if fresh:
+            pool = fresh
+
     return random.choice(pool)
 
 
@@ -277,7 +521,10 @@ def build_generation_prompt(
     show_name: str,
     show_description: str,
     topic_focus: str,
+    show_id: str | None = None,
     guest_voice: str | None = None,
+    plan_note: str | None = None,
+    prior_segments: list[str] | None = None,
 ) -> str:
     """Build the full prompt for content generation."""
     show_context = {
@@ -302,10 +549,39 @@ def build_generation_prompt(
         prompt_template = prompt_template.format(guest_name=guest["name"])
         topic = f"{topic} (Guest context: {guest['context']})"
     elif segment_type == "panel":
-        # Panel uses two hosts
         pass
 
+    # Build context layers
+    context_parts = []
+
+    # Show log — what this show has covered recently
+    if show_id:
+        show_log = format_show_log_for_prompt(show_id)
+        if show_log:
+            context_parts.append(show_log)
+
+    # Listener messages — real voices from the audience
+    if segment_type in ("listener_mailbag", "show_intro", "deep_dive"):
+        messages = format_messages_for_prompt()
+        if messages:
+            context_parts.append(messages)
+
+    # Show plan context — what came earlier in this episode
+    if prior_segments:
+        context_parts.append(
+            "EARLIER IN THIS EPISODE (maintain the throughline, reference what you've already said):\n"
+            + "\n".join(f"- {s}" for s in prior_segments)
+        )
+
+    # Plan note — direction from the show planner
+    if plan_note:
+        context_parts.append(f"DIRECTION: {plan_note}")
+
+    context_block = "\n\n".join(context_parts)
+
     prompt = f"""{base}
+
+{context_block}
 
 SEGMENT: {segment_type}
 TOPIC: {topic}
@@ -434,10 +710,13 @@ def generate_segment(
     segment_type: str,
     voices: dict[str, str],
     topic: str | None = None,
+    sequence: int | None = None,
+    plan_note: str | None = None,
+    prior_segments: list[str] | None = None,
 ) -> Path | None:
     """Generate a single talk segment with audio."""
     if topic is None:
-        topic = select_topic(topic_focus, segment_type)
+        topic = select_topic(topic_focus, segment_type, show_id=show_id)
 
     min_words, max_words = SEGMENT_WORD_TARGETS.get(segment_type, (1500, 2500))
     log(f"=== Generating {segment_type} for {show_name} ===")
@@ -453,7 +732,10 @@ def generate_segment(
         show_name=show_name,
         show_description=show_description,
         topic_focus=topic_focus,
+        show_id=show_id,
         guest_voice=voices.get("guest"),
+        plan_note=plan_note,
+        prior_segments=prior_segments,
     )
 
     # Try generation with one retry
@@ -484,7 +766,8 @@ def generate_segment(
         topic_slug = topic_slug.replace(char, '_')
     topic_slug = '_'.join(filter(None, topic_slug.split('_')))
 
-    output_path = show_dir / f"{segment_type}_{topic_slug}_{timestamp}.wav"
+    seq_prefix = f"{sequence:02d}_" if sequence is not None else ""
+    output_path = show_dir / f"{seq_prefix}{segment_type}_{topic_slug}_{timestamp}.wav"
 
     # Preprocess for TTS
     processed = preprocess_for_tts(script)
@@ -524,6 +807,13 @@ def generate_segment(
         }, f, indent=2)
 
     log(f"  Created: {output_path.name} ({duration_str})")
+
+    # Append to show log — summarize for continuity
+    summary = script[:200].replace("\n", " ").strip()
+    if len(script) > 200:
+        summary += "..."
+    append_show_log(show_id, segment_type, topic, summary)
+
     return output_path
 
 
@@ -625,6 +915,7 @@ def main():
     parser.add_argument("--topic", help="Specific topic")
     parser.add_argument("--count", type=int, default=3, help="Segments to generate (default: 3)")
     parser.add_argument("--all", action="store_true", help="Generate for all shows")
+    parser.add_argument("--plan", action="store_true", help="Generate a planned show (intro, themed segments, outro)")
     parser.add_argument("--status", action="store_true", help="Show segment counts per show")
     parser.add_argument("--list-types", action="store_true", help="List segment types")
     parser.add_argument("--list-topics", help="List topics for a focus area")
@@ -675,7 +966,10 @@ def main():
         return 0
 
     # Generate
-    if args.all:
+    if args.plan:
+        show_id = args.show or schedule.resolve().show_id
+        generate_planned_show(show_id, schedule)
+    elif args.all:
         generate_all(schedule, args.count)
     elif args.show:
         generate_for_show(args.show, schedule, args.count, args.segment_type, args.topic)
