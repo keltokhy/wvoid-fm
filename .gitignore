@@ -17,6 +17,7 @@ output/music/
 output/podcasts/
 output/archive/
 output/show_logs/
+output/operator_intents/
 output/now_playing.json
 output/generation.log
 output/.playlist.m3u

@@ -34,6 +34,7 @@ os.environ.pop("CLAUDECODE", None)
 
 from helpers import log, preprocess_for_tts, run_claude, render_single_voice, get_audio_duration
 from persona import build_host_prompt, get_host, STATION_NAME
+from ledger import append_event, event_id, ingest_messages
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCHEDULE_PATH = PROJECT_ROOT / "config" / "schedule.yaml"
@@ -194,6 +195,7 @@ def process_messages(max_batch: int = MAX_BATCH) -> int:
     if not unread:
         return 0
 
+    ingest_messages()
     log(f"Found {len(unread)} unread message(s)")
 
     # Load schedule for current show context and current slot
@@ -279,6 +281,18 @@ def process_messages(max_batch: int = MAX_BATCH) -> int:
                 "voice": voice,
                 "generated_at": datetime.now().isoformat(),
             }, indent=2))
+            append_event({
+                "id": event_id("resp", str(output_path), datetime.now().isoformat(timespec="seconds")),
+                "type": "listener_response_generated",
+                "time": datetime.now().isoformat(timespec="seconds"),
+                "show_id": show_id,
+                "host": host_id,
+                "messages": [m["message"] for m in batch],
+                "path": str(output_path),
+                "word_count": word_count,
+                "duration_seconds": duration,
+                "tags": ["listener_response", show_id],
+            })
         else:
             log("  TTS rendering failed")
 

@@ -59,6 +59,8 @@ from schedule import load_schedule, StationSchedule, slot_key, parse_slot_key
 
 sys.path.insert(0, str(Path(__file__).parent))
 from persona import HOSTS, get_host, build_host_prompt, STATION_NAME
+from context import load_intent, format_prompt_context
+from ledger import append_event, event_id
 
 # =============================================================================
 # SEGMENT TYPE DEFINITIONS
@@ -527,6 +529,7 @@ def build_generation_prompt(
     guest_voice: str | None = None,
     plan_note: str | None = None,
     prior_segments: list[str] | None = None,
+    intent_context: str | None = None,
 ) -> str:
     """Build the full prompt for content generation."""
     show_context = {
@@ -578,6 +581,10 @@ def build_generation_prompt(
     # Plan note — direction from the show planner
     if plan_note:
         context_parts.append(f"DIRECTION: {plan_note}")
+
+    # Operator intent — curated continuity, avoidance, tone, and thread choices
+    if intent_context:
+        context_parts.append(intent_context)
 
     context_block = "\n\n".join(context_parts)
 
@@ -716,6 +723,7 @@ def generate_segment(
     sequence: int | None = None,
     plan_note: str | None = None,
     prior_segments: list[str] | None = None,
+    intent_context: str | None = None,
 ) -> Path | None:
     """Generate a single talk segment with audio."""
     if topic is None:
@@ -739,6 +747,7 @@ def generate_segment(
         guest_voice=voices.get("guest"),
         plan_note=plan_note,
         prior_segments=prior_segments,
+        intent_context=intent_context,
     )
 
     # Try generation with one retry
@@ -817,6 +826,20 @@ def generate_segment(
         summary += "..."
     append_show_log(show_id, segment_type, topic, summary)
 
+    append_event({
+        "id": event_id("seg", str(output_path), datetime.now().isoformat(timespec="seconds")),
+        "type": "segment_generated",
+        "time": datetime.now().isoformat(timespec="seconds"),
+        "show_id": show_id,
+        "segment_type": segment_type,
+        "topic": topic,
+        "summary": summary,
+        "path": str(output_path),
+        "word_count": word_count,
+        "duration_seconds": duration,
+        "tags": ["generated", segment_type, show_id],
+    })
+
     return output_path
 
 
@@ -827,6 +850,7 @@ def generate_for_show(
     count: int = 3,
     segment_type: str | None = None,
     topic: str | None = None,
+    intent: dict | None = None,
 ) -> int:
     """Generate segments for a specific show's slot."""
     if show_id not in schedule.shows:
@@ -835,6 +859,8 @@ def generate_for_show(
         return 0
 
     show = schedule.shows[show_id]
+    intent = intent or {}
+    intent_context = format_prompt_context(intent, show_id=show_id)
 
     log(f"\n{'='*60}")
     log(f"Generating {count} segments for: {show.name} [slot {slot}]")
@@ -844,8 +870,12 @@ def generate_for_show(
     for i in range(count):
         if segment_type:
             st = segment_type
+        elif intent.get("segment_type"):
+            st = str(intent["segment_type"])
         else:
             st = random.choice(show.segment_types)
+
+        segment_topic = topic if topic is not None else intent.get("topic")
 
         log(f"\n[{i+1}/{count}]")
 
@@ -858,7 +888,8 @@ def generate_for_show(
             segment_type=st,
             voices=dict(show.voices),
             slot=slot,
-            topic=topic,
+            topic=segment_topic,
+            intent_context=intent_context,
         )
         if result:
             success += 1
@@ -950,6 +981,7 @@ def main():
     parser.add_argument("--status", action="store_true", help="Show segment counts per upcoming slot")
     parser.add_argument("--list-types", action="store_true", help="List segment types")
     parser.add_argument("--list-topics", help="List topics for a focus area")
+    parser.add_argument("--intent", help="Operator intent card JSON to guide generation")
 
     args = parser.parse_args()
 
@@ -984,6 +1016,13 @@ def main():
     except Exception as e:
         log(f"Failed to load schedule: {e}")
         return 1
+
+    intent = load_intent(args.intent)
+    if intent:
+        log(f"Loaded operator intent: {intent.get('mode', 'unspecified')} — {intent.get('intent', '')}")
+        args.show = args.show or intent.get("show_id")
+        args.segment_type = args.segment_type or intent.get("segment_type")
+        args.topic = args.topic or intent.get("topic")
 
     if args.status:
         airings = schedule.next_airings(count=args.stock_ahead or 8)
@@ -1025,6 +1064,7 @@ def main():
             count=args.count,
             segment_type=args.segment_type,
             topic=args.topic,
+            intent=intent,
         )
     else:
         resolved = schedule.resolve()
@@ -1034,6 +1074,7 @@ def main():
             count=args.count,
             segment_type=args.segment_type,
             topic=args.topic,
+            intent=intent,
         )
 
     return 0
