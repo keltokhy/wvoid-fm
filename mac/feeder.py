@@ -381,9 +381,38 @@ def run():
         now = time.time()
         if now - last_check >= 5:
             last_check = now
+
+            # Source of truth: stream_metadata.sh writes the active track's
+            # absolute path here as ezstream advances. Fall back to the
+            # first playlist entry only if that file is missing or stale
+            # (eg. before the first track change after a restart).
+            current_path = ""
+            try:
+                if CURRENT_TRACK_FILE.exists():
+                    current_path = CURRENT_TRACK_FILE.read_text().strip()
+            except Exception:
+                current_path = ""
+
+            track_name: str | None = None
+            track_type: str | None = None
+            current_path_obj = Path(current_path) if current_path else None
+            if current_path_obj and current_path_obj.is_absolute() and current_path_obj.exists():
+                try:
+                    track_name, track_type = describe_track(current_path_obj)
+                except Exception:
+                    track_name, track_type = None, None
+
+            if track_name is None:
+                if playlist_entries:
+                    track_name = playlist_entries[0]["name"]
+                    track_type = playlist_entries[0]["type"]
+                else:
+                    track_name = show["show_name"]
+                    track_type = "silence"
+
             np_info = {
-                "track": playlist_entries[0]["name"] if playlist_entries else show["show_name"],
-                "type": playlist_entries[0]["type"] if playlist_entries else "silence",
+                "track": track_name,
+                "type": track_type,
                 "show_id": show["show_id"],
                 "show": show["show_name"],
                 "host": show["host"],
@@ -396,13 +425,15 @@ def run():
             # Write to disk for external consumers
             write_now_playing(np_info)
 
-            # Record play when stream_metadata.sh advances .current_track.txt
+            # Record play when the current-track file advances to a new path
             try:
-                if CURRENT_TRACK_FILE.exists():
-                    current = CURRENT_TRACK_FILE.read_text().strip()
-                    if current and current != last_recorded_track:
-                        record_play(current, show["show_id"])
-                        last_recorded_track = current
+                if (
+                    current_path_obj
+                    and current_path_obj.is_absolute()
+                    and current_path != last_recorded_track
+                ):
+                    record_play(current_path, show["show_id"])
+                    last_recorded_track = current_path
             except Exception:
                 pass
 

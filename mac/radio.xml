@@ -28,14 +28,22 @@
 
   <intakes>
     <intake>
-      <type>playlist</type>
-      <filename>/Volumes/K3/agent-working-space/projects/active/2025-12-29-radio-station/output/.playlist.m3u</filename>
+      <!-- Playlist intake program: returns one filename per call and writes
+           the active track to output/.current_track.txt. That file becomes
+           the source of truth for both Icecast metadata (via stream_metadata.sh)
+           and the now-playing API (via feeder.py). It also archives the
+           previous track to {slot}/aired/ as a side effect. -->
+      <type>program</type>
+      <filename>/Volumes/K3/agent-working-space/projects/active/2025-12-29-radio-station/mac/playlist_intake.py</filename>
       <shuffle>No</shuffle>
       <stream_once>No</stream_once>
     </intake>
   </intakes>
 
   <metadata>
+    <!-- Called by ezstream with no args, "artist", or "title" — never with
+         the file path. The script reads .current_track.txt (written by the
+         playlist intake program) to know what's currently playing. -->
     <program>/Volumes/K3/agent-working-space/projects/active/2025-12-29-radio-station/mac/stream_metadata.sh</program>
     <format_str>@a@ - @t@</format_str>
     <normalize_strings>Yes</normalize_strings>
