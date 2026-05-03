@@ -251,6 +251,82 @@ footer {
   text-align: center;
 }
 
+/* Diary */
+
+.diary-intro {
+  color: var(--text-muted);
+  font-style: italic;
+  margin-bottom: 1rem;
+}
+
+.diary-stats {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  letter-spacing: 0.05em;
+  margin-bottom: 3rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.diary-day {
+  font-size: 1.05rem;
+  font-weight: 400;
+  color: var(--text-muted);
+  letter-spacing: 0.05em;
+  margin-top: 3rem;
+  margin-bottom: 1.2rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.diary-day:first-of-type {
+  margin-top: 0;
+}
+
+.diary-entry {
+  margin-bottom: 2rem;
+  padding-left: 1.1rem;
+  border-left: 2px solid var(--border);
+}
+
+.diary-entry:hover {
+  border-left-color: var(--accent-dim);
+}
+
+.diary-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  margin-bottom: 0.5rem;
+  font-family: var(--font-mono);
+}
+
+.diary-time {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.diary-mode {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.65rem;
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-muted);
+}
+
+.diary-mode-maintenance { color: var(--accent); border-color: var(--accent-dim); }
+.diary-mode-continuity  { color: var(--link); border-color: var(--link); }
+.diary-mode-responsive  { color: var(--accent); border-color: var(--accent); }
+.diary-mode-special     { color: #d4a0e8; border-color: #8a5ea0; }
+
+.diary-text {
+  margin: 0;
+  line-height: 1.75;
+}
+
 /* Step numbers */
 
 .step {

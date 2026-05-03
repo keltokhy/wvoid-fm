@@ -183,6 +183,14 @@ already covers the metrics. Diary is for the things metrics miss.
 Skip the diary only if the run was a true no-op (you bailed in `quiet` mode
 with nothing changed and nothing notable). Otherwise: always leave a note.
 
+After writing the diary entry, refresh the public diary page so the website
+stays in sync with the ledger:
+```bash
+cd "$RADIO_DIR" && uv run python mac/render_diary.py
+```
+(`$RADIO_DIR` is the project root; if it's not set, use `pwd` from the project
+root or substitute the path you cd'd from at the start of this run.)
+
 ## Key Files
 - `mac/feeder.py` — Playlist feeder (manages ezstream, builds playlists, API)
 - `mac/radio.xml` — ezstream config (Icecast connection, Ogg encoding)
